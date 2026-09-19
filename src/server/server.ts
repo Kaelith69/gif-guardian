@@ -266,22 +266,22 @@ async function handleGifForm(
       ? form.reason.trim().slice(0, 200)
       : 'pookie_cm'
 
-  const previewUrls = new Map<string, string>()
-
-  for (const giphyId of giphyIds) {
-    const existing = await getRestrictedGif(giphyId)
-
-    if (existing?.previewUrl) {
-      previewUrls.set(giphyId, existing.previewUrl)
-    } else if (!existing) {
-      previewUrls.set(giphyId, await createGifPreview(giphyId))
-    }
-  }
-
   const now = new Date().toISOString()
   let mutation
 
   try {
+    const previewUrls = new Map<string, string>()
+
+    for (const giphyId of giphyIds) {
+      const existing = await getRestrictedGif(giphyId)
+
+      if (existing?.previewUrl) {
+        previewUrls.set(giphyId, existing.previewUrl)
+      } else {
+        previewUrls.set(giphyId, await createGifPreview(giphyId))
+      }
+    }
+
     mutation = await mutateRestrictions(
       giphyIds.map(giphyId => ({
         giphyId,

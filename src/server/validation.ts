@@ -103,8 +103,18 @@ export function parseRestrictedGif(value: string): RestrictedGif {
     previewUrl:
       record.previewUrl === undefined
         ? undefined
-        : requireString(record.previewUrl, 'previewUrl'),
+        : requireHttpsUrl(record.previewUrl, 'previewUrl'),
   }
+}
+
+function requireHttpsUrl(value: unknown, field: string): string {
+  const url = requireString(value, field)
+
+  if (!/^https:\/\//i.test(url)) {
+    throw new RegistryValidationError(`${field} must be a valid HTTPS URL.`)
+  }
+
+  return url
 }
 
 export function parseGifStatus(value: unknown): GifStatus {
