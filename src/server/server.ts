@@ -165,7 +165,7 @@ async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
               type: 'string',
               name: 'reason',
               label: 'Reason',
-              defaultValue: 'pookie_cm',
+              defaultValue: 'Politics/Religious',
               required: true,
             },
           ],
