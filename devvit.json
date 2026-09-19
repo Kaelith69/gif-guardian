@@ -33,6 +33,10 @@
   "forms": {
     "restrictGif": "/internal/form/restrict-gif-submit"
   },
+  "triggers": {
+    "onCommentDelete": "/internal/triggers/comment-delete",
+    "onPostDelete": "/internal/triggers/post-delete"
+  },
   "permissions": {
     "redis": true,
     "reddit": {

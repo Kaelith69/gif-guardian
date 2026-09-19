@@ -4,9 +4,11 @@ export type RestrictedGif = {
   giphyId: string
   status: GifStatus
   reason: string
-  addedBy: string
-  addedAt: string
+  firstAddedAt: string
+  firstAddedBy?: string
+  lastActionAt: string
+  lastActionBy?: string
   sourceComment: string
+  sourceUrl: string
   sourcePost: string
-  originalUrl: string
 }

@@ -1,13 +1,18 @@
 import {redis} from '@devvit/web/server'
-
-const AUDIT_KEY = 'gif-guardian:audit'
-const AUDIT_SEQUENCE_KEY = 'gif-guardian:audit:sequence'
+import {
+  AUDIT_KEY,
+  AUDIT_RETENTION_SECONDS,
+  AUDIT_SEQUENCE_KEY,
+} from './state.ts'
 
 export type AuditAction =
   | 'restrict'
+  | 'already-restricted'
   | 'disable'
   | 'restore'
   | 'initialize-automod'
+  | 'sync'
+  | 'sync-error'
 
 export type AuditStatus = 'success' | 'partial' | 'failed'
 
@@ -36,6 +41,12 @@ export async function appendAudit(record: AuditRecord): Promise<void> {
     member,
     score: Date.parse(record.at),
   })
+
+  await redis.zRemRangeByScore(
+    AUDIT_KEY,
+    Number.NEGATIVE_INFINITY,
+    Date.now() - AUDIT_RETENTION_SECONDS * 1000,
+  )
 }
 
 export async function listAudit(

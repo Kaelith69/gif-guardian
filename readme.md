@@ -32,7 +32,7 @@ GIF moderation is repetitive when the same unwanted GIF keeps reappearing. Gif-G
 - Active and disabled GIF states.
 - Managed AutoModerator rule generation using `action: spam`.
 - Dashboard controls for refresh, initialization, disable, and restore.
-- Rollback of GIF records when AutoModerator synchronization fails.
+- Redis desired-state tracking when AutoModerator synchronization fails.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ The public dashboard is served as `public/dashboard.html`. The TypeScript server
 2. The app extracts one or more GIPHY IDs and shows a reason form.
 3. The records are saved as active in Redis.
 4. AutoModerator's managed block is synchronized with the active IDs.
-5. The current comment is removed as spam. If synchronization fails, the Redis changes are restored.
+5. The current comment is removed as spam. If synchronization fails, the Redis desired state is retained and marked as an error for later repair.
 
 ## Tech stack
 
@@ -158,12 +158,13 @@ Use **Disable** for an active record or **Restore** for a disabled record. Each 
 │   ├── server.ts               # Routes, moderator checks, and workflow handlers
 │   ├── automod.ts              # Managed AutoModerator block synchronization
 │   ├── audit.ts                # Redis-backed audit records
-│   ├── db.ts                   # Generic Redis counter helpers from the base scaffold
 │   ├── gif-parser.ts            # GIPHY embed ID extraction
 │   ├── gif-store.ts             # Restricted GIF Redis storage
-│   └── gif.ts                   # GIF status and record types
+│   ├── gif.ts                   # GIF status and record types
+│   ├── state.ts                 # Desired revision, locks, and action claims
+│   └── validation.ts            # Runtime Redis record validation
 ├── src/shared/
-│   └── api.ts                  # Shared endpoint types from the scaffold
+│   └── index.ts                 # Shared project entrypoint
 ├── src/test/                   # Test TypeScript project configuration
 ├── .github/workflows/ci.yaml   # GitHub Actions typecheck, lint, test, and build jobs
 ├── LICENSE                     # BSD-3-Clause license
@@ -195,7 +196,7 @@ All application routes require a `POST` or `GET` request as shown. Moderator-fac
 
 - `src/server/server.ts`: `onReq` is the Devvit request handler.
 - `src/server/gif-parser.ts`: `extractGiphyIds(body)` returns unique supported GIPHY IDs.
-- `src/server/gif-store.ts`: `getRestrictedGif`, `saveRestrictedGif`, `saveRestrictedGifs`, `deleteRestrictedGif`, `setGifStatus`, and `listRestrictedGifs` manage the registry.
+- `src/server/gif-store.ts`: `getRestrictedGif`, `mutateRestrictions`, `setGifStatus`, and `listRestrictedGifs` manage the validated registry.
 - `src/server/automod.ts`: `getAutoModStatus`, `initializeAutoMod`, and `syncAutoMod` manage the wiki block.
 - `src/server/audit.ts`: `appendAudit` and `listAudit` manage audit history.
 
@@ -218,7 +219,7 @@ npm run test:unit
 npm run build
 ```
 
-The repository currently has no committed unit test files, so the test runner reports zero tests while the type, lint, and build checks still validate the project.
+The unit suite covers GIPHY parsing, Redis record validation, managed AutoModerator blocks, and rule-size packing.
 
 ### Contributing
 
@@ -229,8 +230,8 @@ The repository currently has no committed unit test files, so the test runner re
 
 ## Roadmap
 
-- [ ] Add focused unit tests for GIPHY parsing and AutoModerator block replacement.
-- [ ] Add tests for Redis rollback when AutoModerator synchronization fails.
+- [x] Add focused unit tests for GIPHY parsing and AutoModerator block replacement.
+- [x] Add tests for desired-state retention when AutoModerator synchronization fails.
 - [ ] Add test coverage reporting to CI.
 - [ ] Document a complete Devvit playtest and moderator setup walkthrough.
 

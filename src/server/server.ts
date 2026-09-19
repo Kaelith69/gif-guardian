@@ -5,12 +5,18 @@ import {appendAudit, listAudit} from './audit.ts'
 import {getAutoModStatus, initializeAutoMod, syncAutoMod} from './automod.ts'
 import {extractGiphyIds} from './gif-parser.ts'
 import {
-  deleteRestrictedGif,
   getRestrictedGif,
   listRestrictedGifs,
-  saveRestrictedGif,
-  saveRestrictedGifs,
+  mutateRestrictions,
+  removeSourceReference,
+  setGifStatus,
 } from './gif-store.ts'
+import {
+  type ActionResult,
+  claimAction,
+  getActionResult,
+  saveActionResult,
+} from './state.ts'
 
 type FormData = Record<string, unknown>
 
@@ -69,6 +75,22 @@ export async function onReq(
 
     if (reqMsg.method === 'POST' && pathname === '/api/initialize-automod') {
       await handleInitializeAutoMod(rspMsg)
+      return
+    }
+
+    if (
+      reqMsg.method === 'POST' &&
+      pathname === '/internal/triggers/comment-delete'
+    ) {
+      await handleSourceDelete(reqMsg, rspMsg, 'comment')
+      return
+    }
+
+    if (
+      reqMsg.method === 'POST' &&
+      pathname === '/internal/triggers/post-delete'
+    ) {
+      await handleSourceDelete(reqMsg, rspMsg, 'post')
       return
     }
 
@@ -196,6 +218,30 @@ async function handleGifForm(
 
   const {comment, giphyIds} = await getCommentContext()
 
+  const existingAction = await getActionResult(comment.id)
+
+  if (existingAction) {
+    writeJson<UiResponse>(200, {showToast: existingAction.message}, rspMsg)
+    return
+  }
+
+  const claimed = await claimAction(comment.id, {
+    status: 'partial',
+    giphyIds,
+    message: 'Restriction is already being processed.',
+  })
+
+  if (!claimed) {
+    const result = await getActionResult(comment.id)
+
+    writeJson<UiResponse>(
+      200,
+      {showToast: result?.message ?? 'Restriction is already being processed.'},
+      rspMsg,
+    )
+    return
+  }
+
   const form = await readJson<FormData>(reqMsg)
 
   const reason =
@@ -203,42 +249,34 @@ async function handleGifForm(
       ? form.reason.trim().slice(0, 200)
       : 'pookie_cm'
 
-  const existing = new Map<
-    string,
-    Awaited<ReturnType<typeof getRestrictedGif>>
-  >()
+  const now = new Date().toISOString()
+  let mutation
 
-  for (const giphyId of giphyIds) {
-    existing.set(giphyId, await getRestrictedGif(giphyId))
+  try {
+    mutation = await mutateRestrictions(
+      giphyIds.map(giphyId => ({
+        giphyId,
+        reason,
+        username,
+        sourceComment: comment.id,
+        sourceUrl: comment.url,
+        sourcePost: comment.postId,
+      })),
+    )
+  } catch (error) {
+    await saveActionResult(comment.id, {
+      status: 'partial',
+      giphyIds,
+      message: `Restriction failed: ${error}`,
+    })
+    throw error
   }
 
-  const now = new Date().toISOString()
-
-  const records = giphyIds.map(giphyId => ({
-    giphyId,
-    status: 'active' as const,
-    reason,
-    addedBy: username,
-    addedAt: now,
-    sourceComment: comment.id,
-    sourcePost: comment.postId,
-    originalUrl: `https://giphy.com/gifs/${giphyId}`,
-  }))
-
-  await saveRestrictedGifs(records)
-
+  let syncError: unknown
   try {
     await syncAutoMod(subredditName)
   } catch (err) {
-    for (const [giphyId, previous] of existing) {
-      if (previous) {
-        await saveRestrictedGif(previous)
-      } else {
-        await deleteRestrictedGif(giphyId)
-      }
-    }
-
-    throw err
+    syncError = err
   }
 
   let removedAsSpam = false
@@ -251,8 +289,13 @@ async function handleGifForm(
   }
 
   await appendAudit({
-    action: 'restrict',
-    status: removedAsSpam ? 'success' : 'partial',
+    action:
+      mutation.alreadyRestricted.length === giphyIds.length
+        ? 'already-restricted'
+        : syncError
+          ? 'sync-error'
+          : 'restrict',
+    status: removedAsSpam && !syncError ? 'success' : 'partial',
     giphyIds,
     commentId: comment.id,
     postId: comment.postId,
@@ -260,17 +303,29 @@ async function handleGifForm(
     at: now,
     reason,
     removedComment: removedAsSpam,
-    note: removedAsSpam
-      ? undefined
-      : 'GIFs were restricted and AutoModerator updated, but spam removal failed.',
+    note: syncError
+      ? `GIFs remain in Redis desired state, but AutoModerator sync failed: ${syncError}`
+      : removedAsSpam
+        ? undefined
+        : 'GIFs were restricted, but spam removal failed.',
   })
+
+  const result: ActionResult = {
+    status: removedAsSpam && !syncError ? 'success' : 'partial',
+    giphyIds,
+    message: syncError
+      ? `Restricted ${giphyIds.length} GIF(s), but AutoModerator sync failed.`
+      : removedAsSpam
+        ? `Restricted ${giphyIds.length} GIF(s) and removed the comment as spam.`
+        : `Restricted ${giphyIds.length} GIF(s), but spam removal failed.`,
+  }
+
+  await saveActionResult(comment.id, result)
 
   writeJson<UiResponse>(
     200,
     {
-      showToast: removedAsSpam
-        ? `Restricted ${giphyIds.length} GIF(s) and removed the comment as spam.`
-        : `Restricted ${giphyIds.length} GIF(s), but spam removal failed.`,
+      showToast: result.message,
     },
     rspMsg,
   )
@@ -332,39 +387,65 @@ async function handleStatusChange(
     throw new Error(`GIF ${giphyId} is not in the registry.`)
   }
 
-  const updated = {
-    ...existing,
-    status,
+  const updated = await setGifStatus(giphyId, status, username)
+
+  if (!updated) {
+    throw new Error(`GIF ${giphyId} is not in the registry.`)
   }
 
-  await saveRestrictedGif(updated)
+  let syncError: unknown
 
   try {
     await syncAutoMod(subredditName)
   } catch (err) {
-    await saveRestrictedGif(existing)
-    throw err
+    syncError = err
   }
 
   await appendAudit({
     action: status === 'disabled' ? 'disable' : 'restore',
-    status: 'success',
+    status: syncError ? 'partial' : 'success',
     giphyIds: [giphyId],
     commentId: existing.sourceComment,
     postId: existing.sourcePost,
     moderator: username,
     at: new Date().toISOString(),
     reason: existing.reason,
+    note: syncError
+      ? `Desired state retained, but AutoModerator sync failed: ${syncError}`
+      : undefined,
   })
 
   writeJson(
     200,
     {
-      ok: true,
+      ok: !syncError,
       gif: updated,
+      syncError: syncError ? String(syncError) : undefined,
     },
     rspMsg,
   )
+}
+
+async function handleSourceDelete(
+  reqMsg: IncomingMessage,
+  rspMsg: ServerResponse,
+  sourceType: 'comment' | 'post',
+): Promise<void> {
+  const request = await readJson<{
+    sourceId?: unknown
+    commentId?: unknown
+    postId?: unknown
+  }>(reqMsg)
+  const sourceId =
+    request.sourceId ??
+    (sourceType === 'comment' ? request.commentId : request.postId)
+
+  if (typeof sourceId !== 'string' || sourceId.trim() === '') {
+    throw new Error('A valid sourceId is required.')
+  }
+
+  await removeSourceReference(sourceId, sourceType)
+  writeJson(200, {ok: true}, rspMsg)
 }
 
 async function handleInitializeAutoMod(rspMsg: ServerResponse): Promise<void> {
@@ -391,15 +472,33 @@ async function handleInitializeAutoMod(rspMsg: ServerResponse): Promise<void> {
 
 async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
   const chunks: Uint8Array[] = []
+  let size = 0
 
-  reqMsg.on('data', chunk => chunks.push(chunk))
+  reqMsg.on('data', chunk => {
+    size += chunk.length
+
+    if (size > 8192) {
+      reqMsg.destroy(new Error('Request body exceeds the 8192-byte limit.'))
+      return
+    }
+
+    chunks.push(chunk)
+  })
 
   await new Promise<void>((resolve, reject) => {
     reqMsg.on('end', () => resolve())
     reqMsg.on('error', reject)
   })
 
-  return JSON.parse(Buffer.concat(chunks).toString()) as T
+  if (size > 8192) {
+    throw new Error('Request body exceeds the 8192-byte limit.')
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString()) as T
+  } catch {
+    throw new Error('Request body must be valid JSON.')
+  }
 }
 
 function writeJson<T extends PartialJsonValue>(
