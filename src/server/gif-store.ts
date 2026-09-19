@@ -75,6 +75,7 @@ export async function mutateRestrictions(
     sourceComment: string
     sourceUrl: string
     sourcePost: string
+    previewUrl?: string
   }>,
   status: GifStatus = 'active',
 ): Promise<RegistryMutation> {
@@ -120,6 +121,7 @@ export async function mutateRestrictions(
         sourceComment: previous?.sourceComment ?? item.sourceComment,
         sourceUrl: previous?.sourceUrl ?? item.sourceUrl,
         sourcePost: previous?.sourcePost ?? item.sourcePost,
+        previewUrl: previous?.previewUrl ?? item.previewUrl,
       })
     }
 
@@ -293,6 +295,33 @@ export async function markSyncPending(): Promise<RegistryState> {
 
   await redis.set(STATE_KEY, JSON.stringify(next))
   return next
+}
+
+export async function setPreviewUrlIfAbsent(
+  giphyId: string,
+  previewUrl: string,
+): Promise<RestrictedGif | undefined> {
+  for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
+    const transaction = await redis.watch(GIF_HASH_KEY)
+    const existing = await getRestrictedGif(giphyId)
+
+    if (!existing || existing.previewUrl) {
+      await transaction.discard()
+      return existing
+    }
+
+    const updated = {...existing, previewUrl}
+    await transaction.multi()
+    await transaction.hSet(GIF_HASH_KEY, {
+      [giphyId]: JSON.stringify(updated),
+    })
+
+    if (await transaction.exec()) {
+      return updated
+    }
+  }
+
+  throw new Error('GIF preview metadata changed concurrently; please retry.')
 }
 
 export async function removeSourceReference(

@@ -11,4 +11,5 @@ export type RestrictedGif = {
   sourceComment: string
   sourceUrl: string
   sourcePost: string
+  previewUrl?: string
 }

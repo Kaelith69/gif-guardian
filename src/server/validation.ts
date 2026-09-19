@@ -100,6 +100,10 @@ export function parseRestrictedGif(value: string): RestrictedGif {
     sourceComment: requireString(record.sourceComment, 'sourceComment'),
     sourceUrl: requireString(record.sourceUrl, 'sourceUrl'),
     sourcePost: requireString(record.sourcePost, 'sourcePost'),
+    previewUrl:
+      record.previewUrl === undefined
+        ? undefined
+        : requireString(record.previewUrl, 'previewUrl'),
   }
 }
 

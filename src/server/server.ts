@@ -11,7 +11,9 @@ import {
   removeRestrictedGifs,
   removeSourceReference,
   setGifStatus,
+  setPreviewUrlIfAbsent,
 } from './gif-store.ts'
+import {createGifPreview} from './giphy-preview.ts'
 import {
   type ActionResult,
   claimAction,
@@ -76,6 +78,11 @@ export async function onReq(
 
     if (reqMsg.method === 'POST' && pathname === '/api/remove') {
       await handleRemoveRestrictedGifs(reqMsg, rspMsg)
+      return
+    }
+
+    if (reqMsg.method === 'POST' && pathname === '/api/refresh-preview') {
+      await handleRefreshPreview(reqMsg, rspMsg)
       return
     }
 
@@ -259,6 +266,18 @@ async function handleGifForm(
       ? form.reason.trim().slice(0, 200)
       : 'pookie_cm'
 
+  const previewUrls = new Map<string, string>()
+
+  for (const giphyId of giphyIds) {
+    const existing = await getRestrictedGif(giphyId)
+
+    if (existing?.previewUrl) {
+      previewUrls.set(giphyId, existing.previewUrl)
+    } else if (!existing) {
+      previewUrls.set(giphyId, await createGifPreview(giphyId))
+    }
+  }
+
   const now = new Date().toISOString()
   let mutation
 
@@ -271,6 +290,7 @@ async function handleGifForm(
         sourceComment: comment.id,
         sourceUrl: comment.url,
         sourcePost: comment.postId,
+        previewUrl: previewUrls.get(giphyId),
       })),
     )
   } catch (error) {
@@ -339,6 +359,37 @@ async function handleGifForm(
     },
     rspMsg,
   )
+}
+
+async function handleRefreshPreview(
+  reqMsg: IncomingMessage,
+  rspMsg: ServerResponse,
+): Promise<void> {
+  await requireModerator()
+  const request = await readJson<{giphyId?: unknown}>(reqMsg)
+
+  if (
+    typeof request.giphyId !== 'string' ||
+    !/^[A-Za-z0-9_-]+$/.test(request.giphyId)
+  ) {
+    throw new Error('A valid GIPHY ID is required.')
+  }
+
+  const existing = await getRestrictedGif(request.giphyId)
+
+  if (!existing) {
+    throw new Error(`GIF ${request.giphyId} is not in the registry.`)
+  }
+
+  if (existing.previewUrl) {
+    writeJson(200, {ok: true, gif: existing}, rspMsg)
+    return
+  }
+
+  const previewUrl = await createGifPreview(request.giphyId)
+  const updated = await setPreviewUrlIfAbsent(request.giphyId, previewUrl)
+
+  writeJson(200, {ok: true, gif: updated}, rspMsg)
 }
 
 async function handleOpenDashboard(rspMsg: ServerResponse): Promise<void> {

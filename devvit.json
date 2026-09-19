@@ -39,6 +39,7 @@
   },
   "permissions": {
     "redis": true,
+    "media": true,
     "reddit": {
       "enable": true,
       "scope": "moderator"
