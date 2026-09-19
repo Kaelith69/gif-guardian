@@ -57,15 +57,6 @@ function parseSourceIds(value: string, sourceId: string): string[] {
   return ids
 }
 
-async function getSourceIds(
-  sourceId: string,
-  sourceType: SourceType = 'comment',
-): Promise<string[]> {
-  const value = await redis.hGet(getSourceKey(sourceType), sourceId)
-
-  return value ? parseSourceIds(value, sourceId) : []
-}
-
 function dedupeInputs(incoming: RestrictionInput[]): RestrictionInput[] {
   const byId = new Map<string, RestrictionInput>()
 
@@ -328,11 +319,4 @@ export async function removeSourceReference(
   await withRegistryLock(async () => {
     await redis.hDel(sourceKey, [sourceId])
   })
-}
-
-export async function getSourceReference(
-  sourceId: string,
-  sourceType: SourceType,
-): Promise<string[]> {
-  return getSourceIds(sourceId, sourceType)
 }

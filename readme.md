@@ -95,12 +95,13 @@ Only that marked section is replaced by Gif-Guardian. Other AutoModerator config
 </p>
 
 1. A moderator chooses **Gif-Guardian: Restrict GIF** on a comment.
-2. The app extracts the supported GIPHY IDs and opens the native restriction form.
-3. The submitted records are written to Redis in one transaction.
-4. The desired registry revision becomes pending.
-5. AutoModerator is synchronized from the current active GIF registry.
-6. The current comment is spam-removed.
-7. The result is audited and shown to the moderator.
+2. The native confirmation form opens immediately, without waiting for a Reddit API read.
+3. On confirmation, the app validates the comment and extracts supported GIPHY IDs.
+4. The submitted records are written to Redis in one transaction.
+5. The desired registry revision becomes pending.
+6. AutoModerator is synchronized from the current active GIF registry.
+7. The current comment is spam-removed.
+8. The result is audited and shown to the moderator.
 
 If AutoModerator synchronization fails, the Redis desired state is retained. A later **Gif-Guardian: Sync AutoModerator** action can reconcile the projection.
 
@@ -126,7 +127,9 @@ Spam removal
 Audit record
 ```
 
-The default moderation reason is `pookie_cm`.
+The default moderation reason is `Reason`.
+
+The confirmation form is intentionally fast: validation of the selected comment happens only after the moderator confirms. This keeps the menu interaction responsive while retaining server-side validation before any data is changed.
 
 ### Manage restricted GIFs
 
@@ -161,7 +164,7 @@ A restricted GIF record has this shape:
 {
   "giphyId": "example",
   "status": "active",
-  "reason": "pookie_cm",
+  "reason": "Reason",
   "firstAddedAt": "2026-09-19T00:00:00.000Z",
   "firstAddedBy": "moderator",
   "lastActionAt": "2026-09-19T00:00:00.000Z",
@@ -207,7 +210,7 @@ Each managed rule uses:
 type: comment
 body (includes, regex): '![gif](giphy|(ID1|ID2)(?:|[^)]*)?)'
 action: spam
-action_reason: "pookie_cm"
+action_reason: "Politic/Religious"
 moderators_exempt: false
 ```
 
@@ -219,7 +222,7 @@ All application routes are `POST` routes.
 
 | Route | Purpose |
 | --- | --- |
-| `/internal/menu/restrict-gif` | Validate the moderator, inspect the current comment, and open the native restriction form |
+| `/internal/menu/restrict-gif` | Open the native restriction form immediately |
 | `/internal/menu/manage-restricted-gifs` | Open the native restricted-GIF management form |
 | `/internal/menu/sync-automod` | Manually reconcile AutoModerator with Redis |
 | `/internal/form/restrict-gif-submit` | Persist restrictions, synchronize AutoModerator, remove the comment, and audit the action |
@@ -387,8 +390,9 @@ The Redis concurrency paths are implemented against Devvit's transaction API and
 - [x] Remove the custom dashboard in favor of native moderator menus and forms.
 - [x] Harden Redis read/modify/write paths with transactions.
 - [x] Add duplicate and malformed AutoModerator marker checks.
+- [x] Make the Restrict GIF confirmation form open without a Reddit API round trip.
 - [ ] Add dedicated coverage reporting to CI.
-- [ ] Document a complete Devvit playtest walkthrough.
+- [x] Document a complete Devvit playtest walkthrough in [guide.md](guide.md).
 
 ## License
 

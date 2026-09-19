@@ -24,7 +24,7 @@ export type SyncResult = {
 }
 
 export function buildRule(ids: string[]): string {
-  const escapedIds = ids.map(id => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const escapedIds = ids.map(escapeRegex)
 
   const regex = `!\\[gif\\]\\(giphy\\|(${escapedIds.join('|')})(?:\\|[^)]*)?\\)`
 
@@ -40,17 +40,19 @@ export function buildRule(ids: string[]): string {
 export function packIds(ids: string[]): string[][] {
   const groups: string[][] = []
   let current: string[] = []
+  let currentSize = Buffer.byteLength(buildRule([]), 'utf8')
 
   for (const id of ids) {
-    const candidate = [...current, id]
-    const rule = buildRule(candidate)
-    const size = Buffer.byteLength(rule, 'utf8')
+    const idSize = Buffer.byteLength(escapeRegex(id), 'utf8')
+    const candidateSize = currentSize + idSize + (current.length === 0 ? 0 : 1)
 
-    if (current.length > 0 && size > MAX_AUTOMOD_RULE_BYTES) {
+    if (current.length > 0 && candidateSize > MAX_AUTOMOD_RULE_BYTES) {
       groups.push(current)
       current = [id]
+      currentSize = Buffer.byteLength(buildRule([id]), 'utf8')
     } else {
-      current = candidate
+      current.push(id)
+      currentSize = candidateSize
     }
   }
 
@@ -59,6 +61,10 @@ export function packIds(ids: string[]): string[][] {
   }
 
   return groups
+}
+
+function escapeRegex(id: string): string {
+  return id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 export function buildManagedBlock(activeIds: string[]): string {
@@ -163,10 +169,6 @@ async function releaseLock(token: string): Promise<void> {
   }
 }
 
-async function assertLease(token: string): Promise<void> {
-  await assertLockOwned(token)
-}
-
 async function markSyncSuccess(revision: number, wikiRevisionId: string) {
   return updateRegistryState(revision, current => ({
     ...current,
@@ -223,7 +225,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
   try {
     for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt += 1) {
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const initialState = await getRegistryState()
 
@@ -232,11 +234,10 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
       const activeIds = (await listRestrictedGifs())
         .filter(gif => gif.status === 'active')
         .map(gif => gif.giphyId)
-        .sort()
 
       lastActiveCount = activeIds.length
 
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const stateAfterRegistryRead = await getRegistryState()
 
@@ -252,7 +253,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
       const block = buildManagedBlock(activeIds)
 
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const stateBeforeWrite = await getRegistryState()
 
@@ -286,7 +287,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
       const updatedContent = ensureManagedBlock(pageBeforeWrite.content, block)
 
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const latestStateBeforeWrite = await getRegistryState()
 
@@ -307,7 +308,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
         })
       }
 
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const latestPage = await reddit.getWikiPage(subredditName, AUTOMOD_PAGE)
 
@@ -333,7 +334,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
         continue
       }
 
-      await assertLease(lockToken)
+      await assertLockOwned(lockToken)
 
       const committedState = await markSyncSuccess(
         currentRevision,
