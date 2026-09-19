@@ -17,7 +17,6 @@
       --text-white: #ffffff;
 
       --green-main: #52a835;
-      --green-border: #28561b;
       --red-main: #ea0027;
 
       --border-dim: #1f1f1f;
@@ -46,7 +45,6 @@
       width: 100%;
       max-width: 420px;
       background-color: var(--bg-panel);
-      border: 1px solid var(--green-border);
       border-radius: 8px;
     }
 
@@ -495,6 +493,15 @@
         render(state)
       } catch (error) {
         updateStatus('Failed', 'err')
+        const list = document.getElementById('gif-list')
+        list.innerHTML = ''
+        const message = document.createElement('div')
+        message.className = 'empty'
+        message.textContent =
+          error instanceof Error
+            ? error.message
+            : 'Could not load Gif-Guardian state.'
+        list.appendChild(message)
       }
     }
 
