@@ -106,28 +106,21 @@ async function requireModerator(): Promise<{
 }> {
   const subredditName = await getSubredditName()
 
-  const [username, moderators] = await Promise.all([
-    reddit.getCurrentUsername(),
-    reddit.getModerators({subredditName}).all(),
-  ])
+  const user = await reddit.getCurrentUser()
 
-  if (!username) {
+  if (!user) {
     throw new Error('Gif-Guardian could not determine the current moderator.')
   }
 
-  const normalizedUsername = username.toLowerCase()
+  const permissions = await user.getModPermissionsForSubreddit(subredditName)
 
-  const isModerator = moderators.some(
-    moderator => moderator.username.toLowerCase() === normalizedUsername,
-  )
-
-  if (!isModerator) {
+  if (permissions.length === 0) {
     throw new Error('Moderator access is required for Gif-Guardian.')
   }
 
   return {
     subredditName,
-    username,
+    username: user.username,
   }
 }
 
@@ -153,12 +146,7 @@ async function getCommentContext() {
 }
 
 async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
-  const [, commentContext] = await Promise.all([
-    requireModerator(),
-    getCommentContext(),
-  ])
-
-  const {comment, giphyIds} = commentContext
+  const {comment, giphyIds} = await getCommentContext()
 
   writeJson<UiResponse>(
     200,
@@ -258,9 +246,13 @@ async function handleRestrictGifForm(
   reqMsg: IncomingMessage,
   rspMsg: ServerResponse,
 ): Promise<void> {
-  const {subredditName, username} = await requireModerator()
+  const [moderator, commentContext] = await Promise.all([
+    requireModerator(),
+    getCommentContext(),
+  ])
 
-  const {comment, giphyIds} = await getCommentContext()
+  const {subredditName, username} = moderator
+  const {comment, giphyIds} = commentContext
 
   const existingAction = await getActionResult(comment.id)
 
@@ -328,28 +320,46 @@ async function handleRestrictGifForm(
     throw error
   }
 
-  let syncResult: SyncResult | undefined
+  const [syncOutcome, removalOutcome] = await Promise.all([
+    (async () => {
+      try {
+        return {
+          result: await syncAutoMod(subredditName),
+          error: undefined,
+        }
+      } catch (error) {
+        return {
+          result: undefined,
+          error,
+        }
+      }
+    })(),
+    (async () => {
+      try {
+        await reddit.remove(comment.id, true)
 
-  let syncError: unknown
+        return {
+          removed: true,
+        }
+      } catch (error) {
+        console.error(
+          `Gif-Guardian could not spam-remove ${comment.id}; ${formatError(
+            error,
+          )}`,
+        )
 
-  try {
-    syncResult = await syncAutoMod(subredditName)
-  } catch (error) {
-    syncError = error
-  }
+        return {
+          removed: false,
+        }
+      }
+    })(),
+  ])
+
+  const syncResult = syncOutcome.result
+  const syncError = syncOutcome.error
+  const removedAsSpam = removalOutcome.removed
 
   const syncPending = syncResult?.status === 'pending'
-
-  let removedAsSpam = false
-
-  try {
-    await reddit.remove(comment.id, true)
-    removedAsSpam = true
-  } catch (error) {
-    console.error(
-      `Gif-Guardian could not spam-remove ${comment.id}; ${formatError(error)}`,
-    )
-  }
 
   const action =
     mutation.alreadyRestricted.length === giphyIds.length
