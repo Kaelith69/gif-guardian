@@ -233,6 +233,9 @@ export async function removeSourceReference(
   )
 }
 
-export async function getSourceReference(commentId: string): Promise<string[]> {
-  return getSourceIds(commentId)
+export async function getSourceReference(
+  sourceId: string,
+  sourceType: 'comment' | 'post',
+): Promise<string[]> {
+  return getSourceIds(sourceId, sourceType)
 }

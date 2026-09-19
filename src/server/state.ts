@@ -12,7 +12,7 @@ export const ACTION_KEY_PREFIX = 'gif-guardian:action:'
 
 export const AUDIT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 export const ACTION_TTL_SECONDS = 10 * 60
-export const LOCK_TTL_SECONDS = 30
+export const LOCK_TTL_SECONDS = 120
 export const MAX_AUTOMOD_RULE_BYTES = 8_000
 
 export type SyncStatus = 'synced' | 'pending' | 'error'
@@ -62,6 +62,31 @@ export async function getRegistryState(): Promise<RegistryState> {
 
 export async function saveRegistryState(state: RegistryState): Promise<void> {
   await redis.set(STATE_KEY, JSON.stringify(state))
+}
+
+export async function updateRegistryState(
+  expectedRevision: number,
+  update: (state: RegistryState) => RegistryState,
+): Promise<RegistryState> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const transaction = await redis.watch(STATE_KEY)
+    const current = await getRegistryState()
+
+    if (current.desiredRevision !== expectedRevision) {
+      await transaction.discard()
+      return current
+    }
+
+    const next = update(current)
+    await transaction.multi()
+    await transaction.set(STATE_KEY, JSON.stringify(next))
+
+    if (await transaction.exec()) {
+      return next
+    }
+  }
+
+  throw new Error('Gif-Guardian state changed concurrently; please retry.')
 }
 
 export function actionKey(commentId: string): string {

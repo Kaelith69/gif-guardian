@@ -6,7 +6,7 @@ import {
   LOCK_TTL_SECONDS,
   MAX_AUTOMOD_RULE_BYTES,
   type RegistryState,
-  saveRegistryState,
+  updateRegistryState,
 } from './state.ts'
 
 const AUTOMOD_PAGE = 'config/automoderator'
@@ -63,6 +63,10 @@ export function ensureManagedBlock(content: string, block: string): string {
   const start = content.indexOf(START_MARKER)
   const end = content.indexOf(END_MARKER)
 
+  if ((start === -1) !== (end === -1)) {
+    throw new Error('Gif-Guardian AutoModerator markers are incomplete.')
+  }
+
   if (start !== -1 && end !== -1 && end >= start) {
     return (
       content.slice(0, start) + block + content.slice(end + END_MARKER.length)
@@ -97,34 +101,24 @@ async function markSyncSuccess(
   revision: number,
   wikiRevisionId: string,
 ): Promise<RegistryState> {
-  const current = await getRegistryState()
-
-  if (current.desiredRevision !== revision) {
-    return current
-  }
-
-  const next: RegistryState = {
+  return updateRegistryState(revision, current => ({
     ...current,
     syncedRevision: revision,
     syncStatus: 'synced',
     lastSyncAt: new Date().toISOString(),
     lastSyncError: null,
     wikiRevisionId,
-  }
-
-  await saveRegistryState(next)
-  return next
+  }))
 }
 
 async function markSyncError(revision: number, error: unknown): Promise<void> {
-  const current = await getRegistryState()
   const message = error instanceof Error ? error.message : String(error)
 
-  await saveRegistryState({
+  await updateRegistryState(revision, current => ({
     ...current,
-    syncStatus: current.desiredRevision === revision ? 'error' : 'pending',
+    syncStatus: 'error',
     lastSyncError: message,
-  })
+  }))
 }
 
 export async function getAutoModStatus(subredditName: string): Promise<{
@@ -161,6 +155,10 @@ export async function syncAutoMod(subredditName: string): Promise<number> {
       .sort()
     const block = buildManagedBlock(activeIds)
     const updatedContent = ensureManagedBlock(page.content, block)
+
+    if ((await redis.get(AUTOMOD_LOCK_KEY)) !== lockToken) {
+      throw new Error('Gif-Guardian AutoModerator sync lock expired.')
+    }
 
     if (updatedContent !== page.content) {
       await reddit.updateWikiPage({

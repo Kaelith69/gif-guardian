@@ -108,7 +108,11 @@ export async function onReq(
     console.error(`Gif-Guardian server error; ${message}`)
 
     writeJson(
-      500,
+      err instanceof RequestTooLargeError
+        ? 413
+        : err instanceof InvalidJsonError
+          ? 400
+          : 500,
       {
         error: message,
       },
@@ -225,6 +229,8 @@ async function handleGifForm(
     return
   }
 
+  const form = await readJson<FormData>(reqMsg)
+
   const claimed = await claimAction(comment.id, {
     status: 'partial',
     giphyIds,
@@ -241,8 +247,6 @@ async function handleGifForm(
     )
     return
   }
-
-  const form = await readJson<FormData>(reqMsg)
 
   const reason =
     typeof form.reason === 'string' && form.reason.trim().length > 0
@@ -470,6 +474,20 @@ async function handleInitializeAutoMod(rspMsg: ServerResponse): Promise<void> {
   )
 }
 
+class RequestTooLargeError extends Error {
+  constructor() {
+    super('Request body exceeds the 8192-byte limit.')
+    this.name = 'RequestTooLargeError'
+  }
+}
+
+class InvalidJsonError extends Error {
+  constructor() {
+    super('Request body must be valid JSON.')
+    this.name = 'InvalidJsonError'
+  }
+}
+
 async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
   const chunks: Uint8Array[] = []
   let size = 0
@@ -478,7 +496,6 @@ async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
     size += chunk.length
 
     if (size > 8192) {
-      reqMsg.destroy(new Error('Request body exceeds the 8192-byte limit.'))
       return
     }
 
@@ -491,13 +508,13 @@ async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
   })
 
   if (size > 8192) {
-    throw new Error('Request body exceeds the 8192-byte limit.')
+    throw new RequestTooLargeError()
   }
 
   try {
     return JSON.parse(Buffer.concat(chunks).toString()) as T
   } catch {
-    throw new Error('Request body must be valid JSON.')
+    throw new InvalidJsonError()
   }
 }
 

@@ -51,7 +51,25 @@ export function parseRestrictedGif(value: string): RestrictedGif {
     throw new RegistryValidationError('record must be an object.')
   }
 
-  const giphyId = requireString(parsed.giphyId, 'giphyId')
+  let record: Record<string, unknown> = parsed
+
+  const legacy =
+    record.firstAddedAt === undefined &&
+    record.lastActionAt === undefined &&
+    record.addedAt !== undefined
+
+  if (legacy) {
+    record = {
+      ...record,
+      firstAddedAt: record.addedAt,
+      firstAddedBy: record.addedBy,
+      lastActionAt: record.addedAt,
+      lastActionBy: record.addedBy,
+      sourceUrl: record.sourceUrl ?? record.originalUrl,
+    }
+  }
+
+  const giphyId = requireString(record.giphyId, 'giphyId')
 
   if (!GIPHY_ID_PATTERN.test(giphyId)) {
     throw new RegistryValidationError(
@@ -59,7 +77,7 @@ export function parseRestrictedGif(value: string): RestrictedGif {
     )
   }
 
-  const status = parsed.status
+  const status = record.status
 
   if (status !== 'active' && status !== 'disabled') {
     throw new RegistryValidationError('status must be active or disabled.')
@@ -68,20 +86,20 @@ export function parseRestrictedGif(value: string): RestrictedGif {
   return {
     giphyId,
     status,
-    reason: requireString(parsed.reason, 'reason'),
-    firstAddedAt: requireTimestamp(parsed.firstAddedAt, 'firstAddedAt'),
+    reason: requireString(record.reason, 'reason'),
+    firstAddedAt: requireTimestamp(record.firstAddedAt, 'firstAddedAt'),
     firstAddedBy:
-      parsed.firstAddedBy === undefined
+      record.firstAddedBy === undefined
         ? undefined
-        : requireString(parsed.firstAddedBy, 'firstAddedBy'),
-    lastActionAt: requireTimestamp(parsed.lastActionAt, 'lastActionAt'),
+        : requireString(record.firstAddedBy, 'firstAddedBy'),
+    lastActionAt: requireTimestamp(record.lastActionAt, 'lastActionAt'),
     lastActionBy:
-      parsed.lastActionBy === undefined
+      record.lastActionBy === undefined
         ? undefined
-        : requireString(parsed.lastActionBy, 'lastActionBy'),
-    sourceComment: requireString(parsed.sourceComment, 'sourceComment'),
-    sourceUrl: requireString(parsed.sourceUrl, 'sourceUrl'),
-    sourcePost: requireString(parsed.sourcePost, 'sourcePost'),
+        : requireString(record.lastActionBy, 'lastActionBy'),
+    sourceComment: requireString(record.sourceComment, 'sourceComment'),
+    sourceUrl: requireString(record.sourceUrl, 'sourceUrl'),
+    sourcePost: requireString(record.sourcePost, 'sourcePost'),
   }
 }
 

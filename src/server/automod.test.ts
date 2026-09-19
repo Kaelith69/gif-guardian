@@ -32,6 +32,17 @@ test('appends a managed block when markers are absent', () => {
   assert.match(result, /# === COCONAAD GIF GUARD START ===/)
 })
 
+test('rejects incomplete managed markers', () => {
+  assert.throws(
+    () =>
+      ensureManagedBlock(
+        '# === COCONAAD GIF GUARD START ===\ntype: comment',
+        buildManagedBlock(['ABC']),
+      ),
+    /markers are incomplete/,
+  )
+})
+
 test('packs IDs without exceeding the configured rule size', () => {
   const groups = packIds(
     Array.from({length: 3_000}, (_, index) => `ID${index}`),

@@ -27,3 +27,21 @@ test('rejects malformed registry records', () => {
     RegistryValidationError,
   )
 })
+
+test('maps legacy registry records to the current shape', () => {
+  const record = parseRestrictedGif(
+    JSON.stringify({
+      giphyId: 'LEGACY',
+      status: 'active',
+      reason: 'old-rule',
+      addedAt: '2026-09-19T00:00:00.000Z',
+      addedBy: 'moderator',
+      sourceComment: 't1_abc',
+      sourcePost: 't3_post',
+      originalUrl: 'https://giphy.com/gifs/LEGACY',
+    }),
+  )
+
+  assert.equal(record.firstAddedAt, record.lastActionAt)
+  assert.equal(record.sourceUrl, 'https://giphy.com/gifs/LEGACY')
+})
