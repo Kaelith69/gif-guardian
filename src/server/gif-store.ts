@@ -1,8 +1,10 @@
 import {redis} from '@devvit/web/server'
 import type {GifStatus, RestrictedGif} from './gif.ts'
 import {
+  EMPTY_STATE,
   GIF_HASH_KEY,
   getRegistryState,
+  parseRegistryState,
   type RegistryState,
   SOURCE_COMMENTS_KEY,
   SOURCE_POSTS_KEY,
@@ -19,36 +21,75 @@ export type RegistryMutation = {
   revision: number
 }
 
+type RestrictionInput = {
+  giphyId: string
+  reason: string
+  username?: string
+  sourceComment: string
+  sourceUrl: string
+  sourcePost: string
+}
+
+type SourceType = 'comment' | 'post'
+
+function getSourceKey(sourceType: SourceType): string {
+  return sourceType === 'comment'
+    ? SOURCE_COMMENTS_KEY
+    : SOURCE_POSTS_KEY
+}
+
 function serializeSourceIds(ids: string[]): string {
   return JSON.stringify([...new Set(ids)].sort())
 }
 
-async function getSourceIds(
+function parseSourceIds(
+  value: string,
   sourceId: string,
-  sourceType: 'comment' | 'post' = 'comment',
-): Promise<string[]> {
-  const value = await redis.hGet(
-    sourceType === 'comment' ? SOURCE_COMMENTS_KEY : SOURCE_POSTS_KEY,
-    sourceId,
-  )
-
-  if (!value) {
-    return []
-  }
-
+): string[] {
   let ids: unknown
 
   try {
     ids = JSON.parse(value)
   } catch {
-    throw new Error(`Invalid source-reference index for ${sourceId}.`)
+    throw new Error(
+      `Invalid source-reference index for ${sourceId}.`,
+    )
   }
 
-  if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string')) {
-    throw new Error(`Invalid source-reference index for ${sourceId}.`)
+  if (
+    !Array.isArray(ids) ||
+    !ids.every(id => typeof id === 'string')
+  ) {
+    throw new Error(
+      `Invalid source-reference index for ${sourceId}.`,
+    )
   }
 
   return ids
+}
+
+async function getSourceIds(
+  sourceId: string,
+  sourceType: SourceType = 'comment',
+): Promise<string[]> {
+  const value = await redis.hGet(
+    getSourceKey(sourceType),
+    sourceId,
+  )
+
+  return value ? parseSourceIds(value, sourceId) : []
+}
+
+function dedupeInputs(
+  incoming: RestrictionInput[],
+): RestrictionInput[] {
+  const byId = new Map<string, RestrictionInput>()
+
+  for (const item of incoming) {
+    byId.set(item.giphyId, item)
+  }
+
+  return [...byId.values()]
 }
 
 export async function getRestrictedGif(
@@ -68,42 +109,66 @@ export async function listRestrictedGifs(): Promise<RestrictedGif[]> {
 }
 
 export async function mutateRestrictions(
-  incoming: Array<{
-    giphyId: string
-    reason: string
-    username?: string
-    sourceComment: string
-    sourceUrl: string
-    sourcePost: string
-  }>,
+  incoming: RestrictionInput[],
   status: GifStatus = 'active',
 ): Promise<RegistryMutation> {
-  for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
+  const items = dedupeInputs(incoming)
+
+  if (items.length === 0) {
+    const state = await getRegistryState()
+
+    return {
+      records: [],
+      changed: false,
+      alreadyRestricted: [],
+      revision: state.desiredRevision,
+    }
+  }
+
+  for (
+    let attempt = 0;
+    attempt < MAX_TRANSACTION_RETRIES;
+    attempt += 1
+  ) {
     const transaction = await redis.watch(
       GIF_HASH_KEY,
       SOURCE_COMMENTS_KEY,
       SOURCE_POSTS_KEY,
       STATE_KEY,
     )
+
     const existing = new Map<string, RestrictedGif>()
 
-    for (const item of incoming) {
-      const record = await getRestrictedGif(item.giphyId)
+    for (const item of items) {
+      const value = await transaction.hGet(
+        GIF_HASH_KEY,
+        item.giphyId,
+      )
 
-      if (record) {
-        existing.set(item.giphyId, record)
+      if (value) {
+        existing.set(
+          item.giphyId,
+          parseRestrictedGif(value),
+        )
       }
     }
 
-    const currentState = await getRegistryState()
+    const stateValue = await transaction.get(STATE_KEY)
+    const currentState = stateValue
+      ? parseRegistryState(stateValue)
+      : EMPTY_STATE
+
     const now = new Date().toISOString()
     const alreadyRestricted: string[] = []
     const records: RestrictedGif[] = []
 
-    for (const item of incoming) {
+    for (const item of items) {
       const previous = existing.get(item.giphyId)
 
-      if (previous?.status === 'active' && status === 'active') {
+      if (
+        previous?.status === 'active' &&
+        status === 'active'
+      ) {
         alreadyRestricted.push(item.giphyId)
         records.push(previous)
         continue
@@ -114,23 +179,31 @@ export async function mutateRestrictions(
         status,
         reason: previous?.reason ?? item.reason,
         firstAddedAt: previous?.firstAddedAt ?? now,
-        firstAddedBy: previous?.firstAddedBy ?? item.username,
+        firstAddedBy:
+          previous?.firstAddedBy ?? item.username,
         lastActionAt: now,
         lastActionBy: item.username,
-        sourceComment: previous?.sourceComment ?? item.sourceComment,
-        sourceUrl: previous?.sourceUrl ?? item.sourceUrl,
-        sourcePost: previous?.sourcePost ?? item.sourcePost,
+        sourceComment:
+          previous?.sourceComment ?? item.sourceComment,
+        sourceUrl:
+          previous?.sourceUrl ?? item.sourceUrl,
+        sourcePost:
+          previous?.sourcePost ?? item.sourcePost,
       })
     }
 
     const changed = records.some(record => {
       const previous = existing.get(record.giphyId)
 
-      return JSON.stringify(previous) !== JSON.stringify(record)
+      return (
+        JSON.stringify(previous) !==
+        JSON.stringify(record)
+      )
     })
 
     if (!changed) {
       await transaction.discard()
+
       return {
         records,
         changed: false,
@@ -139,39 +212,100 @@ export async function mutateRestrictions(
       }
     }
 
+    const affectedComments = new Set<string>()
+    const affectedPosts = new Set<string>()
+
+    for (const record of records) {
+      affectedComments.add(record.sourceComment)
+      affectedPosts.add(record.sourcePost)
+    }
+
+    const commentIndexes = new Map<string, string[]>()
+    const postIndexes = new Map<string, string[]>()
+
+    for (const sourceId of affectedComments) {
+      const value = await transaction.hGet(
+        SOURCE_COMMENTS_KEY,
+        sourceId,
+      )
+
+      commentIndexes.set(
+        sourceId,
+        value
+          ? parseSourceIds(value, sourceId)
+          : [],
+      )
+    }
+
+    for (const sourceId of affectedPosts) {
+      const value = await transaction.hGet(
+        SOURCE_POSTS_KEY,
+        sourceId,
+      )
+
+      postIndexes.set(
+        sourceId,
+        value
+          ? parseSourceIds(value, sourceId)
+          : [],
+      )
+    }
+
+    for (const record of records) {
+      const commentIds =
+        commentIndexes.get(record.sourceComment) ?? []
+
+      commentIndexes.set(
+        record.sourceComment,
+        [...commentIds, record.giphyId],
+      )
+
+      const postIds =
+        postIndexes.get(record.sourcePost) ?? []
+
+      postIndexes.set(
+        record.sourcePost,
+        [...postIds, record.giphyId],
+      )
+    }
+
     const nextState: RegistryState = {
       ...currentState,
-      desiredRevision: currentState.desiredRevision + 1,
+      desiredRevision:
+        currentState.desiredRevision + 1,
       syncStatus: 'pending',
       lastSyncError: null,
     }
 
     await transaction.multi()
+
     await transaction.hSet(
       GIF_HASH_KEY,
       Object.fromEntries(
-        records.map(record => [record.giphyId, JSON.stringify(record)]),
+        records.map(record => [
+          record.giphyId,
+          JSON.stringify(record),
+        ]),
       ),
     )
 
-    for (const record of records) {
-      const sourceIds = await getSourceIds(record.sourceComment)
-
+    for (const [sourceId, ids] of commentIndexes) {
       await transaction.hSet(SOURCE_COMMENTS_KEY, {
-        [record.sourceComment]: serializeSourceIds([
-          ...sourceIds,
-          record.giphyId,
-        ]),
-      })
-
-      const postIds = await getSourceIds(record.sourcePost, 'post')
-
-      await transaction.hSet(SOURCE_POSTS_KEY, {
-        [record.sourcePost]: serializeSourceIds([...postIds, record.giphyId]),
+        [sourceId]: serializeSourceIds(ids),
       })
     }
 
-    await transaction.set(STATE_KEY, JSON.stringify(nextState))
+    for (const [sourceId, ids] of postIndexes) {
+      await transaction.hSet(SOURCE_POSTS_KEY, {
+        [sourceId]: serializeSourceIds(ids),
+      })
+    }
+
+    await transaction.set(
+      STATE_KEY,
+      JSON.stringify(nextState),
+    )
+
     const result = await transaction.exec()
 
     if (result) {
@@ -184,7 +318,9 @@ export async function mutateRestrictions(
     }
   }
 
-  throw new Error('Gif-Guardian registry changed concurrently; please retry.')
+  throw new Error(
+    'Gif-Guardian registry changed concurrently; please retry.',
+  )
 }
 
 export async function setGifStatus(
@@ -192,50 +328,117 @@ export async function setGifStatus(
   status: GifStatus,
   username?: string,
 ): Promise<RestrictedGif | undefined> {
-  const existing = await getRestrictedGif(giphyId)
+  for (
+    let attempt = 0;
+    attempt < MAX_TRANSACTION_RETRIES;
+    attempt += 1
+  ) {
+    const transaction = await redis.watch(
+      GIF_HASH_KEY,
+      STATE_KEY,
+    )
 
-  if (!existing) {
-    return undefined
+    const value = await transaction.hGet(
+      GIF_HASH_KEY,
+      giphyId,
+    )
+
+    if (!value) {
+      await transaction.discard()
+      return undefined
+    }
+
+    const existing = parseRestrictedGif(value)
+
+    if (existing.status === status) {
+      await transaction.discard()
+      return existing
+    }
+
+    const stateValue = await transaction.get(STATE_KEY)
+    const currentState = stateValue
+      ? parseRegistryState(stateValue)
+      : EMPTY_STATE
+
+    const updated: RestrictedGif = {
+      ...existing,
+      status,
+      lastActionAt: new Date().toISOString(),
+      lastActionBy: username,
+    }
+
+    const nextState: RegistryState = {
+      ...currentState,
+      desiredRevision:
+        currentState.desiredRevision + 1,
+      syncStatus: 'pending',
+      lastSyncError: null,
+    }
+
+    await transaction.multi()
+
+    await transaction.hSet(GIF_HASH_KEY, {
+      [giphyId]: JSON.stringify(updated),
+    })
+
+    await transaction.set(
+      STATE_KEY,
+      JSON.stringify(nextState),
+    )
+
+    const result = await transaction.exec()
+
+    if (result) {
+      return updated
+    }
   }
 
-  const mutation = await mutateRestrictions(
-    [
-      {
-        giphyId,
-        reason: existing.reason,
-        username,
-        sourceComment: existing.sourceComment,
-        sourceUrl: existing.sourceUrl,
-        sourcePost: existing.sourcePost,
-      },
-    ],
-    status,
+  throw new Error(
+    'Gif-Guardian registry changed concurrently; please retry.',
   )
-
-  return mutation.records[0]
-}
-
-export async function markSyncPending(): Promise<RegistryState> {
-  const state = await getRegistryState()
-  const next = {...state, syncStatus: 'pending' as const, lastSyncError: null}
-
-  await redis.set(STATE_KEY, JSON.stringify(next))
-  return next
 }
 
 export async function removeSourceReference(
   sourceId: string,
-  sourceType: 'comment' | 'post',
+  sourceType: SourceType,
 ): Promise<void> {
-  await redis.hDel(
-    sourceType === 'comment' ? SOURCE_COMMENTS_KEY : SOURCE_POSTS_KEY,
-    [sourceId],
+  const sourceKey = getSourceKey(sourceType)
+
+  for (
+    let attempt = 0;
+    attempt < MAX_TRANSACTION_RETRIES;
+    attempt += 1
+  ) {
+    const transaction = await redis.watch(sourceKey)
+
+    const existing = await transaction.hGet(
+      sourceKey,
+      sourceId,
+    )
+
+    if (existing === null) {
+      await transaction.discard()
+      return
+    }
+
+    await transaction.multi()
+    await transaction.hDel(sourceKey, [sourceId])
+
+    const result = await transaction.exec()
+
+    if (result) {
+      return
+    }
+  }
+
+  throw new Error(
+    'Gif-Guardian source index changed concurrently; please retry.',
   )
 }
 
 export async function getSourceReference(
   sourceId: string,
-  sourceType: 'comment' | 'post',
+  sourceType: SourceType,
 ): Promise<string[]> {
   return getSourceIds(sourceId, sourceType)
 }

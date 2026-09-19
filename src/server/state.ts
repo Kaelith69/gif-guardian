@@ -15,6 +15,8 @@ export const ACTION_TTL_SECONDS = 10 * 60
 export const LOCK_TTL_SECONDS = 120
 export const MAX_AUTOMOD_RULE_BYTES = 8_000
 
+const MAX_STATE_TRANSACTION_RETRIES = 5
+
 export type SyncStatus = 'synced' | 'pending' | 'error'
 
 export type RegistryState = {
@@ -35,6 +37,38 @@ export const EMPTY_STATE: RegistryState = {
   wikiRevisionId: null,
 }
 
+export function parseRegistryState(value: string): RegistryState {
+  const parsed = parseJsonRecord<Partial<RegistryState>>(
+    value,
+    'state',
+  )
+
+  if (
+    typeof parsed.desiredRevision !== 'number' ||
+    !Number.isSafeInteger(parsed.desiredRevision) ||
+    parsed.desiredRevision < 0 ||
+    typeof parsed.syncedRevision !== 'number' ||
+    !Number.isSafeInteger(parsed.syncedRevision) ||
+    parsed.syncedRevision < 0 ||
+    parsed.syncedRevision > parsed.desiredRevision ||
+    !['synced', 'pending', 'error'].includes(
+      parsed.syncStatus ?? '',
+    ) ||
+    (parsed.lastSyncAt !== null &&
+      typeof parsed.lastSyncAt !== 'string') ||
+    (parsed.lastSyncError !== null &&
+      typeof parsed.lastSyncError !== 'string') ||
+    (parsed.wikiRevisionId !== null &&
+      typeof parsed.wikiRevisionId !== 'string')
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian registry state.',
+    )
+  }
+
+  return parsed as RegistryState
+}
+
 export async function getRegistryState(): Promise<RegistryState> {
   const value = await redis.get(STATE_KEY)
 
@@ -42,35 +76,93 @@ export async function getRegistryState(): Promise<RegistryState> {
     return EMPTY_STATE
   }
 
-  const parsed = parseJsonRecord<Partial<RegistryState>>(value, 'state')
-
-  if (
-    typeof parsed.desiredRevision !== 'number' ||
-    typeof parsed.syncedRevision !== 'number' ||
-    !['synced', 'pending', 'error'].includes(parsed.syncStatus ?? '') ||
-    (parsed.lastSyncAt !== null && typeof parsed.lastSyncAt !== 'string') ||
-    (parsed.lastSyncError !== null &&
-      typeof parsed.lastSyncError !== 'string') ||
-    (parsed.wikiRevisionId !== null &&
-      typeof parsed.wikiRevisionId !== 'string')
-  ) {
-    throw new Error('Invalid Gif-Guardian registry state.')
-  }
-
-  return parsed as RegistryState
+  return parseRegistryState(value)
 }
 
-export async function saveRegistryState(state: RegistryState): Promise<void> {
-  await redis.set(STATE_KEY, JSON.stringify(state))
+export async function saveRegistryState(
+  state: RegistryState,
+): Promise<void> {
+  validateRegistryState(state)
+
+  await redis.set(
+    STATE_KEY,
+    JSON.stringify(state),
+  )
+}
+
+function validateRegistryState(
+  state: RegistryState,
+  previous?: RegistryState,
+): void {
+  if (
+    !Number.isSafeInteger(state.desiredRevision) ||
+    state.desiredRevision < 0 ||
+    !Number.isSafeInteger(state.syncedRevision) ||
+    state.syncedRevision < 0 ||
+    state.syncedRevision > state.desiredRevision
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian registry revision state.',
+    )
+  }
+
+  if (
+    previous &&
+    (state.desiredRevision < previous.desiredRevision ||
+      state.syncedRevision < previous.syncedRevision)
+  ) {
+    throw new Error(
+      'Gif-Guardian registry revisions cannot move backwards.',
+    )
+  }
+
+  if (
+    state.lastSyncAt !== null &&
+    typeof state.lastSyncAt !== 'string'
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian last-sync timestamp.',
+    )
+  }
+
+  if (
+    state.lastSyncError !== null &&
+    typeof state.lastSyncError !== 'string'
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian sync error.',
+    )
+  }
+
+  if (
+    state.wikiRevisionId !== null &&
+    typeof state.wikiRevisionId !== 'string'
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian wiki revision ID.',
+    )
+  }
 }
 
 export async function updateRegistryState(
   expectedRevision: number,
   update: (state: RegistryState) => RegistryState,
 ): Promise<RegistryState> {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new Error('Invalid Gif-Guardian expected registry revision.')
+  }
+
+  for (
+    let attempt = 0;
+    attempt < MAX_STATE_TRANSACTION_RETRIES;
+    attempt += 1
+  ) {
     const transaction = await redis.watch(STATE_KEY)
-    const current = await getRegistryState()
+    const value = await transaction.get(STATE_KEY)
+
+    const current = value
+      ? parseRegistryState(value)
+      : EMPTY_STATE
 
     if (current.desiredRevision !== expectedRevision) {
       await transaction.discard()
@@ -78,15 +170,26 @@ export async function updateRegistryState(
     }
 
     const next = update(current)
-    await transaction.multi()
-    await transaction.set(STATE_KEY, JSON.stringify(next))
 
-    if (await transaction.exec()) {
+    validateRegistryState(next, current)
+
+    await transaction.multi()
+
+    await transaction.set(
+      STATE_KEY,
+      JSON.stringify(next),
+    )
+
+    const result = await transaction.exec()
+
+    if (result) {
       return next
     }
   }
 
-  throw new Error('Gif-Guardian state changed concurrently; please retry.')
+  throw new Error(
+    'Gif-Guardian state changed concurrently; please retry.',
+  )
 }
 
 export function actionKey(commentId: string): string {
@@ -108,7 +211,9 @@ export async function claimAction(
     JSON.stringify(result),
     {
       nx: true,
-      expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
+      expiration: new Date(
+        Date.now() + ACTION_TTL_SECONDS * 1000,
+      ),
     },
   )
 
@@ -121,7 +226,10 @@ export async function getActionResult(
   const value = await redis.get(actionKey(commentId))
 
   return value
-    ? parseJsonRecord<ActionResult>(value, 'action result')
+    ? parseJsonRecord<ActionResult>(
+        value,
+        'action result',
+      )
     : undefined
 }
 
@@ -129,7 +237,13 @@ export async function saveActionResult(
   commentId: string,
   result: ActionResult,
 ): Promise<void> {
-  await redis.set(actionKey(commentId), JSON.stringify(result), {
-    expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
-  })
+  await redis.set(
+    actionKey(commentId),
+    JSON.stringify(result),
+    {
+      expiration: new Date(
+        Date.now() + ACTION_TTL_SECONDS * 1000,
+      ),
+    },
+  )
 }
