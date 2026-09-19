@@ -1,0 +1,43 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "gif-guardian",
+  "dev": {
+    "subreddit": "TestEnvironmentAlpha"
+  },
+  "post": {
+    "entrypoints": {
+      "default": {
+        "entry": "dashboard.html"
+      }
+    }
+  },
+  "server": {},
+  "menu": {
+    "items": [
+      {
+        "label": "Gif-Guardian: Restrict GIF",
+        "description": "Restrict this GIF and remove the comment as spam.",
+        "location": "comment",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/restrict-gif"
+      },
+      {
+        "label": "Gif-Guardian: Dashboard",
+        "description": "Manage restricted GIFs and AutoModerator.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/open-dashboard"
+      }
+    ]
+  },
+  "forms": {
+    "restrictGif": "/internal/form/restrict-gif-submit"
+  },
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "moderator"
+    }
+  }
+}

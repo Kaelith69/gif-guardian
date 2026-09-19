@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gif-Guardian</title>
+
+    <style>
+    :root {
+      color-scheme: dark;
+      font-family:
+        Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0d1117;
+      color: #e6edf3;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+    }
+
+    .subtitle {
+      color: #8b949e;
+      margin-bottom: 24px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .number {
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .label {
+      color: #8b949e;
+      margin-top: 4px;
+    }
+
+    button {
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #e6edf3;
+      border-radius: 7px;
+      padding: 7px 11px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #30363d;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      padding: 11px;
+      border-bottom: 1px solid #30363d;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: #8b949e;
+      font-size: 13px;
+    }
+
+    .active {
+      color: #7ee787;
+      font-weight: 600;
+    }
+
+    .disabled {
+      color: #8b949e;
+      font-weight: 600;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .status {
+      margin-bottom: 18px;
+      padding: 12px;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      background: #161b22;
+    }
+
+    .error {
+      color: #ff7b72;
+    }
+
+    .empty {
+      color: #8b949e;
+      padding: 20px;
+    }
+    </style>
+  </head>
+
+  <body>
+    <h1>Gif-Guardian</h1>
+    <div class="subtitle">
+      GIF restriction registry and AutoModerator control panel
+    </div>
+
+    <div id="status" class="status">Loading...</div>
+
+    <div class="toolbar">
+      <button type="button" id="refresh">Refresh</button>
+      <button type="button" id="initialize">
+        Initialize / Sync AutoModerator
+      </button>
+    </div>
+
+    <div class="stats">
+      <div class="card">
+        <div id="active-count" class="number">0</div>
+        <div class="label">Active GIFs</div>
+      </div>
+
+      <div class="card">
+        <div id="disabled-count" class="number">0</div>
+        <div class="label">Disabled GIFs</div>
+      </div>
+
+      <div class="card">
+        <div id="audit-count" class="number">0</div>
+        <div class="label">Audit entries</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Restricted GIFs</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>GIPHY ID</th>
+            <th>Status</th>
+            <th>Reason</th>
+            <th>Added By</th>
+            <th>Added</th>
+            <th>Source</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+
+        <tbody id="gif-table">
+          <tr>
+            <td colspan="7" class="empty">Loading...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <script>
+    async function request(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+      })
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed: ${response.status}`)
+      }
+
+      return data
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+    }
+
+    function formatDate(value) {
+      if (!value) {
+        return ''
+      }
+
+      return new Date(value).toLocaleString()
+    }
+
+    function render(state) {
+      const gifs = state.gifs || []
+
+      const active = gifs.filter(gif => gif.status === 'active')
+
+      const disabled = gifs.filter(gif => gif.status === 'disabled')
+
+      document.getElementById('active-count').textContent = active.length
+
+      document.getElementById('disabled-count').textContent = disabled.length
+
+      document.getElementById('audit-count').textContent = (
+        state.audit || []
+      ).length
+
+      const automod = state.automod
+
+      document.getElementById('status').innerHTML = automod.pageExists
+        ? automod.managedBlockPresent
+          ? "AutoModerator: <span class='active'>managed block present</span>"
+          : "AutoModerator: <span class='disabled'>wiki page exists, managed block is not initialized</span>"
+        : "AutoModerator: <span class='error'>config/automoderator could not be read</span>"
+
+      const tbody = document.getElementById('gif-table')
+
+      if (gifs.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty">
+              No restricted GIFs yet.
+            </td>
+          </tr>
+        `
+        return
+      }
+
+      tbody.innerHTML = gifs
+        .map(gif => {
+          const isActive = gif.status === 'active'
+
+          return `
+            <tr>
+              <td class="mono">
+                ${escapeHtml(gif.giphyId)}
+              </td>
+
+              <td class="${isActive ? 'active' : 'disabled'}">
+                ${escapeHtml(gif.status)}
+              </td>
+
+              <td>
+                ${escapeHtml(gif.reason)}
+              </td>
+
+              <td>
+                ${escapeHtml(gif.addedBy)}
+              </td>
+
+              <td>
+                ${escapeHtml(formatDate(gif.addedAt))}
+              </td>
+
+              <td class="mono">
+                ${escapeHtml(gif.sourceComment)}
+              </td>
+
+              <td>
+                <button
+                  data-action="${isActive ? 'disable' : 'restore'}"
+                  data-id="${escapeHtml(gif.giphyId)}"
+                >
+                  ${isActive ? 'Disable' : 'Restore'}
+                </button>
+              </td>
+            </tr>
+          `
+        })
+        .join('')
+    }
+
+    async function load() {
+      const status = document.getElementById('status')
+
+      status.textContent = 'Loading...'
+
+      try {
+        const state = await request('/api/state')
+
+        render(state)
+      } catch (error) {
+        status.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`
+      }
+    }
+
+    async function changeStatus(action, giphyId) {
+      await request(`/api/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          giphyId,
+        }),
+      })
+
+      await load()
+    }
+
+    document
+      .getElementById('refresh')
+      .addEventListener('click', () => void load())
+
+    document
+      .getElementById('initialize')
+      .addEventListener('click', async () => {
+        try {
+          await request('/api/initialize-automod', {
+            method: 'POST',
+            body: '{}',
+          })
+
+          await load()
+        } catch (error) {
+          document.getElementById('status').innerHTML =
+            `<span class="error">${escapeHtml(error.message)}</span>`
+        }
+      })
+
+    document.addEventListener('click', async event => {
+      const button = event.target.closest('button[data-action]')
+
+      if (!button) {
+        return
+      }
+
+      try {
+        await changeStatus(button.dataset.action, button.dataset.id)
+      } catch (error) {
+        document.getElementById('status').innerHTML =
+          `<span class="error">${escapeHtml(error.message)}</span>`
+      }
+    })
+
+    void load()
+    </script>
+  </body>
+</html>
