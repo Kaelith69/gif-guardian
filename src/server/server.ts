@@ -146,8 +146,6 @@ async function getCommentContext() {
 }
 
 async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
-  const {comment, giphyIds} = await getCommentContext()
-
   writeJson<UiResponse>(
     200,
     {
@@ -156,16 +154,15 @@ async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
         form: {
           title: 'Restrict GIF',
           description:
-            `GIF(s) detected: ${giphyIds.join(', ')}\n` +
-            `Comment: ${comment.id}\n\n` +
-            'This will restrict the GIF(s), update AutoModerator, ' +
+            'This will validate GIFs in the selected comment, restrict them, ' +
+            'update AutoModerator, ' +
             'and remove this comment as spam.',
           fields: [
             {
               type: 'string',
               name: 'reason',
               label: 'Reason',
-              defaultValue: 'Politics/Religious',
+              defaultValue: 'Reason',
               required: true,
             },
           ],
@@ -272,7 +269,7 @@ async function handleRestrictGifForm(
   const reason =
     typeof form.reason === 'string' && form.reason.trim().length > 0
       ? form.reason.trim().slice(0, 200)
-      : 'pookie_cm'
+      : 'Reason'
 
   /*
    * Parse the form before claiming the action so malformed input
