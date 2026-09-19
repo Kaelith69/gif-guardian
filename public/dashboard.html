@@ -17,6 +17,7 @@
       --text-white: #ffffff;
 
       --green-main: #52a835;
+      --green-border: #28561b;
       --red-main: #ea0027;
 
       --border-dim: #1f1f1f;
@@ -498,9 +499,9 @@
         const message = document.createElement('div')
         message.className = 'empty'
         message.textContent =
-          error instanceof Error
-            ? error.message
-            : 'Could not load Gif-Guardian state.'
+          window.location.protocol === 'file:'
+            ? 'Open this dashboard through Devvit playtest to load data.'
+            : 'Unable to load dashboard data.'
         list.appendChild(message)
       }
     }
