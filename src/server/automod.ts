@@ -32,7 +32,7 @@ export function buildRule(ids: string[]): string {
     'type: comment',
     `body (includes, regex): '${regex}'`,
     'action: spam',
-    'action_reason: "pookie_cm"',
+    'action_reason: "Politic/Religious"',
     'moderators_exempt: false',
   ].join('\n')
 }
