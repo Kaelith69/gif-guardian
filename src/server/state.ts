@@ -6,6 +6,7 @@ export const STATE_KEY = 'gif-guardian:state'
 export const SOURCE_COMMENTS_KEY = 'gif-guardian:source-comments'
 export const SOURCE_POSTS_KEY = 'gif-guardian:source-posts'
 export const AUTOMOD_LOCK_KEY = 'gif-guardian:automod-lock'
+export const REGISTRY_LOCK_KEY = 'gif-guardian:registry-lock'
 export const AUDIT_KEY = 'gif-guardian:audit'
 export const AUDIT_SEQUENCE_KEY = 'gif-guardian:audit:sequence'
 export const ACTION_KEY_PREFIX = 'gif-guardian:action:'
@@ -13,9 +14,11 @@ export const ACTION_KEY_PREFIX = 'gif-guardian:action:'
 export const AUDIT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 export const ACTION_TTL_SECONDS = 10 * 60
 export const LOCK_TTL_SECONDS = 120
+export const REGISTRY_LOCK_TTL_SECONDS = 120
 export const MAX_AUTOMOD_RULE_BYTES = 8_000
 
-const MAX_STATE_TRANSACTION_RETRIES = 5
+const MAX_LOCK_ACQUIRE_ATTEMPTS = 10
+const LOCK_RETRY_DELAY_MS = 200
 
 export type SyncStatus = 'synced' | 'pending' | 'error'
 
@@ -79,17 +82,6 @@ export async function getRegistryState(): Promise<RegistryState> {
   return parseRegistryState(value)
 }
 
-export async function saveRegistryState(
-  state: RegistryState,
-): Promise<void> {
-  validateRegistryState(state)
-
-  await redis.set(
-    STATE_KEY,
-    JSON.stringify(state),
-  )
-}
-
 function validateRegistryState(
   state: RegistryState,
   previous?: RegistryState,
@@ -144,52 +136,83 @@ function validateRegistryState(
   }
 }
 
+export async function withRegistryLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  const token = crypto.randomUUID()
+
+  for (
+    let attempt = 0;
+    attempt < MAX_LOCK_ACQUIRE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const acquired = await redis.set(
+      REGISTRY_LOCK_KEY,
+      token,
+      {
+        nx: true,
+        expiration: new Date(
+          Date.now() + REGISTRY_LOCK_TTL_SECONDS * 1_000,
+        ),
+      },
+    )
+
+    if (acquired === 'OK') {
+      try {
+        return await work()
+      } finally {
+        const owner = await redis.get(REGISTRY_LOCK_KEY)
+
+        if (owner === token) {
+          await redis.del(REGISTRY_LOCK_KEY)
+        }
+      }
+    }
+
+    await new Promise(resolve => {
+      setTimeout(resolve, LOCK_RETRY_DELAY_MS)
+    })
+  }
+
+  throw new Error(
+    'Gif-Guardian registry is busy; please retry.',
+  )
+}
+
 export async function updateRegistryState(
   expectedRevision: number,
   update: (state: RegistryState) => RegistryState,
 ): Promise<RegistryState> {
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-    throw new Error('Invalid Gif-Guardian expected registry revision.')
+  if (
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 0
+  ) {
+    throw new Error(
+      'Invalid Gif-Guardian expected registry revision.',
+    )
   }
 
-  for (
-    let attempt = 0;
-    attempt < MAX_STATE_TRANSACTION_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(STATE_KEY)
-    const value = await transaction.get(STATE_KEY)
+  return withRegistryLock(async () => {
+    const value = await redis.get(STATE_KEY)
 
     const current = value
       ? parseRegistryState(value)
       : EMPTY_STATE
 
     if (current.desiredRevision !== expectedRevision) {
-      await transaction.discard()
       return current
     }
 
     const next = update(current)
-
     validateRegistryState(next, current)
 
-    await transaction.multi()
-
-    await transaction.set(
+    await redis.set(
       STATE_KEY,
       JSON.stringify(next),
     )
 
-    const result = await transaction.exec()
-
-    if (result) {
-      return next
-    }
-  }
-
-  throw new Error(
-    'Gif-Guardian state changed concurrently; please retry.',
-  )
+    return next
+  })
 }
 
 export function actionKey(commentId: string): string {

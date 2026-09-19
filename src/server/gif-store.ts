@@ -9,6 +9,7 @@ import {
   SOURCE_COMMENTS_KEY,
   SOURCE_POSTS_KEY,
   STATE_KEY,
+  withRegistryLock,
 } from './state.ts'
 import {parseRestrictedGif} from './validation.ts'
 
@@ -125,202 +126,202 @@ export async function mutateRestrictions(
     }
   }
 
-  for (
-    let attempt = 0;
-    attempt < MAX_TRANSACTION_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(
-      GIF_HASH_KEY,
-      SOURCE_COMMENTS_KEY,
-      SOURCE_POSTS_KEY,
-      STATE_KEY,
-    )
+  return withRegistryLock(async () => {
+    for (
+      let attempt = 0;
+      attempt < MAX_TRANSACTION_RETRIES;
+      attempt += 1
+    ) {
+      const existing = new Map<string, RestrictedGif>()
 
-    const existing = new Map<string, RestrictedGif>()
-
-    for (const item of items) {
-      const value = await transaction.hGet(
-        GIF_HASH_KEY,
-        item.giphyId,
-      )
-
-      if (value) {
-        existing.set(
+      for (const item of items) {
+        const value = await redis.hGet(
+          GIF_HASH_KEY,
           item.giphyId,
-          parseRestrictedGif(value),
+        )
+
+        if (value) {
+          existing.set(
+            item.giphyId,
+            parseRestrictedGif(value),
+          )
+        }
+      }
+
+      const stateValue = await redis.get(STATE_KEY)
+      const currentState = stateValue
+        ? parseRegistryState(stateValue)
+        : EMPTY_STATE
+
+      const now = new Date().toISOString()
+      const alreadyRestricted: string[] = []
+      const records: RestrictedGif[] = []
+
+      for (const item of items) {
+        const previous = existing.get(item.giphyId)
+
+        if (
+          previous?.status === 'active' &&
+          status === 'active'
+        ) {
+          alreadyRestricted.push(item.giphyId)
+          records.push(previous)
+          continue
+        }
+
+        records.push({
+          giphyId: item.giphyId,
+          status,
+          reason: previous?.reason ?? item.reason,
+          firstAddedAt: previous?.firstAddedAt ?? now,
+          firstAddedBy:
+            previous?.firstAddedBy ?? item.username,
+          lastActionAt: now,
+          lastActionBy: item.username,
+          sourceComment:
+            previous?.sourceComment ?? item.sourceComment,
+          sourceUrl:
+            previous?.sourceUrl ?? item.sourceUrl,
+          sourcePost:
+            previous?.sourcePost ?? item.sourcePost,
+        })
+      }
+
+      const changed = records.some(record => {
+        const previous = existing.get(record.giphyId)
+
+        return (
+          JSON.stringify(previous) !==
+          JSON.stringify(record)
+        )
+      })
+
+      if (!changed) {
+        return {
+          records,
+          changed: false,
+          alreadyRestricted,
+          revision: currentState.desiredRevision,
+        }
+      }
+
+      const affectedComments = new Set<string>()
+      const affectedPosts = new Set<string>()
+
+      for (const record of records) {
+        affectedComments.add(record.sourceComment)
+        affectedPosts.add(record.sourcePost)
+      }
+
+      const commentIndexes = new Map<string, string[]>()
+      const postIndexes = new Map<string, string[]>()
+
+      for (const sourceId of affectedComments) {
+        const value = await redis.hGet(
+          SOURCE_COMMENTS_KEY,
+          sourceId,
+        )
+
+        commentIndexes.set(
+          sourceId,
+          value
+            ? parseSourceIds(value, sourceId)
+            : [],
         )
       }
-    }
 
-    const stateValue = await transaction.get(STATE_KEY)
-    const currentState = stateValue
-      ? parseRegistryState(stateValue)
-      : EMPTY_STATE
+      for (const sourceId of affectedPosts) {
+        const value = await redis.hGet(
+          SOURCE_POSTS_KEY,
+          sourceId,
+        )
 
-    const now = new Date().toISOString()
-    const alreadyRestricted: string[] = []
-    const records: RestrictedGif[] = []
-
-    for (const item of items) {
-      const previous = existing.get(item.giphyId)
-
-      if (
-        previous?.status === 'active' &&
-        status === 'active'
-      ) {
-        alreadyRestricted.push(item.giphyId)
-        records.push(previous)
-        continue
+        postIndexes.set(
+          sourceId,
+          value
+            ? parseSourceIds(value, sourceId)
+            : [],
+        )
       }
 
-      records.push({
-        giphyId: item.giphyId,
-        status,
-        reason: previous?.reason ?? item.reason,
-        firstAddedAt: previous?.firstAddedAt ?? now,
-        firstAddedBy:
-          previous?.firstAddedBy ?? item.username,
-        lastActionAt: now,
-        lastActionBy: item.username,
-        sourceComment:
-          previous?.sourceComment ?? item.sourceComment,
-        sourceUrl:
-          previous?.sourceUrl ?? item.sourceUrl,
-        sourcePost:
-          previous?.sourcePost ?? item.sourcePost,
-      })
-    }
+      for (const record of records) {
+        const commentIds =
+          commentIndexes.get(record.sourceComment) ?? []
 
-    const changed = records.some(record => {
-      const previous = existing.get(record.giphyId)
+        commentIndexes.set(
+          record.sourceComment,
+          [...commentIds, record.giphyId],
+        )
 
-      return (
-        JSON.stringify(previous) !==
-        JSON.stringify(record)
-      )
-    })
+        const postIds =
+          postIndexes.get(record.sourcePost) ?? []
 
-    if (!changed) {
-      await transaction.discard()
-
-      return {
-        records,
-        changed: false,
-        alreadyRestricted,
-        revision: currentState.desiredRevision,
+        postIndexes.set(
+          record.sourcePost,
+          [...postIds, record.giphyId],
+        )
       }
-    }
 
-    const affectedComments = new Set<string>()
-    const affectedPosts = new Set<string>()
+      const nextState: RegistryState = {
+        ...currentState,
+        desiredRevision:
+          currentState.desiredRevision + 1,
+        syncStatus: 'pending',
+        lastSyncError: null,
+      }
 
-    for (const record of records) {
-      affectedComments.add(record.sourceComment)
-      affectedPosts.add(record.sourcePost)
-    }
-
-    const commentIndexes = new Map<string, string[]>()
-    const postIndexes = new Map<string, string[]>()
-
-    for (const sourceId of affectedComments) {
-      const value = await transaction.hGet(
+      const transaction = await redis.watch(
+        GIF_HASH_KEY,
         SOURCE_COMMENTS_KEY,
-        sourceId,
-      )
-
-      commentIndexes.set(
-        sourceId,
-        value
-          ? parseSourceIds(value, sourceId)
-          : [],
-      )
-    }
-
-    for (const sourceId of affectedPosts) {
-      const value = await transaction.hGet(
         SOURCE_POSTS_KEY,
-        sourceId,
+        STATE_KEY,
       )
 
-      postIndexes.set(
-        sourceId,
-        value
-          ? parseSourceIds(value, sourceId)
-          : [],
-      )
-    }
+      await transaction.multi()
 
-    for (const record of records) {
-      const commentIds =
-        commentIndexes.get(record.sourceComment) ?? []
-
-      commentIndexes.set(
-        record.sourceComment,
-        [...commentIds, record.giphyId],
+      await transaction.hSet(
+        GIF_HASH_KEY,
+        Object.fromEntries(
+          records.map(record => [
+            record.giphyId,
+            JSON.stringify(record),
+          ]),
+        ),
       )
 
-      const postIds =
-        postIndexes.get(record.sourcePost) ?? []
+      for (const [sourceId, ids] of commentIndexes) {
+        await transaction.hSet(SOURCE_COMMENTS_KEY, {
+          [sourceId]: serializeSourceIds(ids),
+        })
+      }
 
-      postIndexes.set(
-        record.sourcePost,
-        [...postIds, record.giphyId],
+      for (const [sourceId, ids] of postIndexes) {
+        await transaction.hSet(SOURCE_POSTS_KEY, {
+          [sourceId]: serializeSourceIds(ids),
+        })
+      }
+
+      await transaction.set(
+        STATE_KEY,
+        JSON.stringify(nextState),
       )
-    }
 
-    const nextState: RegistryState = {
-      ...currentState,
-      desiredRevision:
-        currentState.desiredRevision + 1,
-      syncStatus: 'pending',
-      lastSyncError: null,
-    }
+      const result = await transaction.exec()
 
-    await transaction.multi()
-
-    await transaction.hSet(
-      GIF_HASH_KEY,
-      Object.fromEntries(
-        records.map(record => [
-          record.giphyId,
-          JSON.stringify(record),
-        ]),
-      ),
-    )
-
-    for (const [sourceId, ids] of commentIndexes) {
-      await transaction.hSet(SOURCE_COMMENTS_KEY, {
-        [sourceId]: serializeSourceIds(ids),
-      })
-    }
-
-    for (const [sourceId, ids] of postIndexes) {
-      await transaction.hSet(SOURCE_POSTS_KEY, {
-        [sourceId]: serializeSourceIds(ids),
-      })
-    }
-
-    await transaction.set(
-      STATE_KEY,
-      JSON.stringify(nextState),
-    )
-
-    const result = await transaction.exec()
-
-    if (result) {
-      return {
-        records,
-        changed: true,
-        alreadyRestricted,
-        revision: nextState.desiredRevision,
+      if (result) {
+        return {
+          records,
+          changed: true,
+          alreadyRestricted,
+          revision: nextState.desiredRevision,
+        }
       }
     }
-  }
 
-  throw new Error(
-    'Gif-Guardian registry changed concurrently; please retry.',
-  )
+    throw new Error(
+      'Gif-Guardian registry changed concurrently; please retry.',
+    )
+  })
 }
 
 export async function setGifStatus(
@@ -328,74 +329,74 @@ export async function setGifStatus(
   status: GifStatus,
   username?: string,
 ): Promise<RestrictedGif | undefined> {
-  for (
-    let attempt = 0;
-    attempt < MAX_TRANSACTION_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(
-      GIF_HASH_KEY,
-      STATE_KEY,
+  return withRegistryLock(async () => {
+    for (
+      let attempt = 0;
+      attempt < MAX_TRANSACTION_RETRIES;
+      attempt += 1
+    ) {
+      const value = await redis.hGet(
+        GIF_HASH_KEY,
+        giphyId,
+      )
+
+      if (!value) {
+        return undefined
+      }
+
+      const existing = parseRestrictedGif(value)
+
+      if (existing.status === status) {
+        return existing
+      }
+
+      const stateValue = await redis.get(STATE_KEY)
+      const currentState = stateValue
+        ? parseRegistryState(stateValue)
+        : EMPTY_STATE
+
+      const updated: RestrictedGif = {
+        ...existing,
+        status,
+        lastActionAt: new Date().toISOString(),
+        lastActionBy: username,
+      }
+
+      const nextState: RegistryState = {
+        ...currentState,
+        desiredRevision:
+          currentState.desiredRevision + 1,
+        syncStatus: 'pending',
+        lastSyncError: null,
+      }
+
+      const transaction = await redis.watch(
+        GIF_HASH_KEY,
+        STATE_KEY,
+      )
+
+      await transaction.multi()
+
+      await transaction.hSet(GIF_HASH_KEY, {
+        [giphyId]: JSON.stringify(updated),
+      })
+
+      await transaction.set(
+        STATE_KEY,
+        JSON.stringify(nextState),
+      )
+
+      const result = await transaction.exec()
+
+      if (result) {
+        return updated
+      }
+    }
+
+    throw new Error(
+      'Gif-Guardian registry changed concurrently; please retry.',
     )
-
-    const value = await transaction.hGet(
-      GIF_HASH_KEY,
-      giphyId,
-    )
-
-    if (!value) {
-      await transaction.discard()
-      return undefined
-    }
-
-    const existing = parseRestrictedGif(value)
-
-    if (existing.status === status) {
-      await transaction.discard()
-      return existing
-    }
-
-    const stateValue = await transaction.get(STATE_KEY)
-    const currentState = stateValue
-      ? parseRegistryState(stateValue)
-      : EMPTY_STATE
-
-    const updated: RestrictedGif = {
-      ...existing,
-      status,
-      lastActionAt: new Date().toISOString(),
-      lastActionBy: username,
-    }
-
-    const nextState: RegistryState = {
-      ...currentState,
-      desiredRevision:
-        currentState.desiredRevision + 1,
-      syncStatus: 'pending',
-      lastSyncError: null,
-    }
-
-    await transaction.multi()
-
-    await transaction.hSet(GIF_HASH_KEY, {
-      [giphyId]: JSON.stringify(updated),
-    })
-
-    await transaction.set(
-      STATE_KEY,
-      JSON.stringify(nextState),
-    )
-
-    const result = await transaction.exec()
-
-    if (result) {
-      return updated
-    }
-  }
-
-  throw new Error(
-    'Gif-Guardian registry changed concurrently; please retry.',
-  )
+  })
 }
 
 export async function removeSourceReference(
@@ -404,36 +405,9 @@ export async function removeSourceReference(
 ): Promise<void> {
   const sourceKey = getSourceKey(sourceType)
 
-  for (
-    let attempt = 0;
-    attempt < MAX_TRANSACTION_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(sourceKey)
-
-    const existing = await transaction.hGet(
-      sourceKey,
-      sourceId,
-    )
-
-    if (existing === null) {
-      await transaction.discard()
-      return
-    }
-
-    await transaction.multi()
-    await transaction.hDel(sourceKey, [sourceId])
-
-    const result = await transaction.exec()
-
-    if (result) {
-      return
-    }
-  }
-
-  throw new Error(
-    'Gif-Guardian source index changed concurrently; please retry.',
-  )
+  await withRegistryLock(async () => {
+    await redis.hDel(sourceKey, [sourceId])
+  })
 }
 
 export async function getSourceReference(

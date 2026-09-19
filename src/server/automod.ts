@@ -14,12 +14,6 @@ const AUTOMOD_PAGE = 'config/automoderator'
 const START_MARKER = '# === COCONAAD GIF GUARD START ==='
 const END_MARKER = '# === COCONAAD GIF GUARD END ==='
 
-const LOCK_RENEW_INTERVAL_MS = Math.max(
-  1_000,
-  Math.floor((LOCK_TTL_SECONDS * 1_000) / 3),
-)
-
-const MAX_LOCK_RELEASE_RETRIES = 3
 const MAX_SYNC_ATTEMPTS = 3
 
 export type SyncResult = {
@@ -120,8 +114,8 @@ export function ensureManagedBlock(
     )
   }
 
-  const start = starts[0]
-  const end = ends[0]
+  const start = starts[0]!
+  const end = ends[0]!
 
   if (end < start) {
     throw new Error(
@@ -188,47 +182,6 @@ async function acquireLock(): Promise<string> {
   return token
 }
 
-async function renewLock(
-  token: string,
-): Promise<void> {
-  for (
-    let attempt = 0;
-    attempt < MAX_LOCK_RELEASE_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(
-      AUTOMOD_LOCK_KEY,
-    )
-
-    const currentToken = await transaction.get(
-      AUTOMOD_LOCK_KEY,
-    )
-
-    if (currentToken !== token) {
-      await transaction.discard()
-      throw new AutoModLeaseLostError()
-    }
-
-    await transaction.multi()
-    await transaction.set(
-      AUTOMOD_LOCK_KEY,
-      token,
-    )
-    await transaction.expire(
-      AUTOMOD_LOCK_KEY,
-      LOCK_TTL_SECONDS,
-    )
-
-    const result = await transaction.exec()
-
-    if (result) {
-      return
-    }
-  }
-
-  throw new AutoModLeaseLostError()
-}
-
 async function assertLockOwned(
   token: string,
 ): Promise<void> {
@@ -241,106 +194,16 @@ async function assertLockOwned(
   }
 }
 
-async function releaseLock(
-  token: string,
-): Promise<void> {
-  for (
-    let attempt = 0;
-    attempt < MAX_LOCK_RELEASE_RETRIES;
-    attempt += 1
-  ) {
-    const transaction = await redis.watch(
-      AUTOMOD_LOCK_KEY,
-    )
+async function releaseLock(token: string): Promise<void> {
+  const currentToken = await redis.get(AUTOMOD_LOCK_KEY)
 
-    const currentToken = await transaction.get(
-      AUTOMOD_LOCK_KEY,
-    )
-
-    if (currentToken !== token) {
-      await transaction.discard()
-      return
-    }
-
-    await transaction.multi()
-    await transaction.del(AUTOMOD_LOCK_KEY)
-
-    const result = await transaction.exec()
-
-    if (result) {
-      return
-    }
-  }
-
-  throw new Error(
-    'Gif-Guardian could not safely release the AutoModerator sync lock.',
-  )
-}
-
-function startLeaseRenewal(
-  token: string,
-): {
-  stop: () => void
-  getError: () => Error | undefined
-} {
-  let stopped = false
-  let renewing = false
-  let leaseError: Error | undefined
-
-  const renew = async (): Promise<void> => {
-    if (stopped || renewing || leaseError) {
-      return
-    }
-
-    renewing = true
-
-    try {
-      await renewLock(token)
-    } catch (error) {
-      leaseError =
-        error instanceof Error
-          ? error
-          : new AutoModLeaseLostError()
-    } finally {
-      renewing = false
-    }
-  }
-
-  const timer = setInterval(
-    () => {
-      void renew()
-    },
-    LOCK_RENEW_INTERVAL_MS,
-  )
-
-  timer.unref?.()
-
-  return {
-    stop: () => {
-      stopped = true
-      clearInterval(timer)
-    },
-    getError: () => leaseError,
+  if (currentToken === token) {
+    await redis.del(AUTOMOD_LOCK_KEY)
   }
 }
 
-async function assertLease(
-  token: string,
-  getLeaseError: () => Error | undefined,
-): Promise<void> {
-  const leaseError = getLeaseError()
-
-  if (leaseError) {
-    throw leaseError
-  }
-
+async function assertLease(token: string): Promise<void> {
   await assertLockOwned(token)
-
-  const latestLeaseError = getLeaseError()
-
-  if (latestLeaseError) {
-    throw latestLeaseError
-  }
 }
 
 async function markSyncSuccess(
@@ -417,7 +280,6 @@ export async function syncAutoMod(
   subredditName: string,
 ): Promise<SyncResult> {
   const lockToken = await acquireLock()
-  const lease = startLeaseRenewal(lockToken)
 
   let currentRevision: number | undefined
   let lastActiveCount = 0
@@ -428,10 +290,7 @@ export async function syncAutoMod(
       attempt <= MAX_SYNC_ATTEMPTS;
       attempt += 1
     ) {
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const initialState =
         await getRegistryState()
@@ -450,10 +309,7 @@ export async function syncAutoMod(
 
       lastActiveCount = activeIds.length
 
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const stateAfterRegistryRead =
         await getRegistryState()
@@ -482,10 +338,7 @@ export async function syncAutoMod(
       const block =
         buildManagedBlock(activeIds)
 
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const stateBeforeWrite =
         await getRegistryState()
@@ -541,10 +394,7 @@ export async function syncAutoMod(
           block,
         )
 
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const latestStateBeforeWrite =
         await getRegistryState()
@@ -577,10 +427,7 @@ export async function syncAutoMod(
         })
       }
 
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const latestPage =
         await reddit.getWikiPage(
@@ -631,10 +478,7 @@ export async function syncAutoMod(
         continue
       }
 
-      await assertLease(
-        lockToken,
-        lease.getError,
-      )
+      await assertLease(lockToken)
 
       const committedState =
         await markSyncSuccess(
@@ -688,8 +532,6 @@ export async function syncAutoMod(
 
     throw error
   } finally {
-    lease.stop()
-
     try {
       await releaseLock(lockToken)
     } catch (error) {
