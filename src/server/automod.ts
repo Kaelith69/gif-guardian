@@ -24,12 +24,9 @@ export type SyncResult = {
 }
 
 export function buildRule(ids: string[]): string {
-  const escapedIds = ids.map(id =>
-    id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-  )
+  const escapedIds = ids.map(id => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 
-  const regex =
-    `!\\[gif\\]\\(giphy\\|(${escapedIds.join('|')})(?:\\|[^)]*)?\\)`
+  const regex = `!\\[gif\\]\\(giphy\\|(${escapedIds.join('|')})(?:\\|[^)]*)?\\)`
 
   return [
     'type: comment',
@@ -49,10 +46,7 @@ export function packIds(ids: string[]): string[][] {
     const rule = buildRule(candidate)
     const size = Buffer.byteLength(rule, 'utf8')
 
-    if (
-      current.length > 0 &&
-      size > MAX_AUTOMOD_RULE_BYTES
-    ) {
+    if (current.length > 0 && size > MAX_AUTOMOD_RULE_BYTES) {
       groups.push(current)
       current = [id]
     } else {
@@ -67,43 +61,26 @@ export function packIds(ids: string[]): string[][] {
   return groups
 }
 
-export function buildManagedBlock(
-  activeIds: string[],
-): string {
+export function buildManagedBlock(activeIds: string[]): string {
   const rules = packIds(activeIds)
 
   const body = rules.length
     ? rules.map(buildRule).join('\n')
     : '# Gif-Guardian: no active GIF restrictions.'
 
-  return [
-    START_MARKER,
-    body,
-    END_MARKER,
-  ].join('\n')
+  return [START_MARKER, body, END_MARKER].join('\n')
 }
 
-export function ensureManagedBlock(
-  content: string,
-  block: string,
-): string {
-  const starts = findAllOccurrences(
-    content,
-    START_MARKER,
-  )
-  const ends = findAllOccurrences(
-    content,
-    END_MARKER,
-  )
+export function ensureManagedBlock(content: string, block: string): string {
+  const starts = findAllOccurrences(content, START_MARKER)
+  const ends = findAllOccurrences(content, END_MARKER)
 
   if (starts.length === 0 && ends.length === 0) {
     if (content.length === 0) {
       return `${block}\n`
     }
 
-    const separator = content.endsWith('\n')
-      ? '\n'
-      : '\n\n'
+    const separator = content.endsWith('\n') ? '\n' : '\n\n'
 
     return `${content}${separator}${block}\n`
   }
@@ -114,8 +91,12 @@ export function ensureManagedBlock(
     )
   }
 
-  const start = starts[0]!
-  const end = ends[0]!
+  const start = starts[0]
+  const end = ends[0]
+
+  if (start === undefined || end === undefined) {
+    throw new Error('Gif-Guardian managed block markers are incomplete.')
+  }
 
   if (end < start) {
     throw new Error(
@@ -124,24 +105,16 @@ export function ensureManagedBlock(
   }
 
   return (
-    content.slice(0, start) +
-    block +
-    content.slice(end + END_MARKER.length)
+    content.slice(0, start) + block + content.slice(end + END_MARKER.length)
   )
 }
 
-function findAllOccurrences(
-  content: string,
-  marker: string,
-): number[] {
+function findAllOccurrences(content: string, marker: string): number[] {
   const positions: number[] = []
   let offset = 0
 
   while (true) {
-    const index = content.indexOf(
-      marker,
-      offset,
-    )
+    const index = content.indexOf(marker, offset)
 
     if (index === -1) {
       return positions
@@ -162,32 +135,20 @@ class AutoModLeaseLostError extends Error {
 async function acquireLock(): Promise<string> {
   const token = crypto.randomUUID()
 
-  const result = await redis.set(
-    AUTOMOD_LOCK_KEY,
-    token,
-    {
-      nx: true,
-      expiration: new Date(
-        Date.now() + LOCK_TTL_SECONDS * 1_000,
-      ),
-    },
-  )
+  const result = await redis.set(AUTOMOD_LOCK_KEY, token, {
+    nx: true,
+    expiration: new Date(Date.now() + LOCK_TTL_SECONDS * 1_000),
+  })
 
   if (result !== 'OK') {
-    throw new Error(
-      'Gif-Guardian AutoModerator sync is already in progress.',
-    )
+    throw new Error('Gif-Guardian AutoModerator sync is already in progress.')
   }
 
   return token
 }
 
-async function assertLockOwned(
-  token: string,
-): Promise<void> {
-  const currentToken = await redis.get(
-    AUTOMOD_LOCK_KEY,
-  )
+async function assertLockOwned(token: string): Promise<void> {
+  const currentToken = await redis.get(AUTOMOD_LOCK_KEY)
 
   if (currentToken !== token) {
     throw new AutoModLeaseLostError()
@@ -206,54 +167,34 @@ async function assertLease(token: string): Promise<void> {
   await assertLockOwned(token)
 }
 
-async function markSyncSuccess(
-  revision: number,
-  wikiRevisionId: string,
-) {
-  return updateRegistryState(
-    revision,
-    current => ({
-      ...current,
-      syncedRevision: revision,
-      syncStatus: 'synced',
-      lastSyncAt: new Date().toISOString(),
-      lastSyncError: null,
-      wikiRevisionId,
-    }),
-  )
+async function markSyncSuccess(revision: number, wikiRevisionId: string) {
+  return updateRegistryState(revision, current => ({
+    ...current,
+    syncedRevision: revision,
+    syncStatus: 'synced',
+    lastSyncAt: new Date().toISOString(),
+    lastSyncError: null,
+    wikiRevisionId,
+  }))
 }
 
-async function markSyncPending(
-  revision: number,
-) {
-  return updateRegistryState(
-    revision,
-    current => ({
-      ...current,
-      syncStatus: 'pending',
-      lastSyncError: null,
-    }),
-  )
+async function markSyncPending(revision: number) {
+  return updateRegistryState(revision, current => ({
+    ...current,
+    syncStatus: 'pending',
+    lastSyncError: null,
+  }))
 }
 
-async function markSyncError(
-  revision: number,
-  error: unknown,
-): Promise<void> {
-  const message =
-    error instanceof Error
-      ? error.message
-      : String(error)
+async function markSyncError(revision: number, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error)
 
   try {
-    await updateRegistryState(
-      revision,
-      current => ({
-        ...current,
-        syncStatus: 'error',
-        lastSyncError: message,
-      }),
-    )
+    await updateRegistryState(revision, current => ({
+      ...current,
+      syncStatus: 'error',
+      lastSyncError: message,
+    }))
   } catch (stateError) {
     console.error(
       `Gif-Guardian could not record AutoModerator sync error; ${formatError(
@@ -263,9 +204,7 @@ async function markSyncError(
   }
 }
 
-async function buildPendingResult(
-  activeCount: number,
-): Promise<SyncResult> {
+async function buildPendingResult(activeCount: number): Promise<SyncResult> {
   const state = await getRegistryState()
 
   return {
@@ -276,34 +215,22 @@ async function buildPendingResult(
   }
 }
 
-export async function syncAutoMod(
-  subredditName: string,
-): Promise<SyncResult> {
+export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
   const lockToken = await acquireLock()
 
   let currentRevision: number | undefined
   let lastActiveCount = 0
 
   try {
-    for (
-      let attempt = 1;
-      attempt <= MAX_SYNC_ATTEMPTS;
-      attempt += 1
-    ) {
+    for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt += 1) {
       await assertLease(lockToken)
 
-      const initialState =
-        await getRegistryState()
+      const initialState = await getRegistryState()
 
-      currentRevision =
-        initialState.desiredRevision
+      currentRevision = initialState.desiredRevision
 
-      const activeIds = (
-        await listRestrictedGifs()
-      )
-        .filter(
-          gif => gif.status === 'active',
-        )
+      const activeIds = (await listRestrictedGifs())
+        .filter(gif => gif.status === 'active')
         .map(gif => gif.giphyId)
         .sort()
 
@@ -311,48 +238,27 @@ export async function syncAutoMod(
 
       await assertLease(lockToken)
 
-      const stateAfterRegistryRead =
-        await getRegistryState()
+      const stateAfterRegistryRead = await getRegistryState()
 
-      if (
-        stateAfterRegistryRead.desiredRevision !==
-        currentRevision
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          return buildPendingResult(
-            lastActiveCount,
-          )
+      if (stateAfterRegistryRead.desiredRevision !== currentRevision) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
       }
 
-      const initialPage =
-        await reddit.getWikiPage(
-          subredditName,
-          AUTOMOD_PAGE,
-        )
+      const initialPage = await reddit.getWikiPage(subredditName, AUTOMOD_PAGE)
 
-      const block =
-        buildManagedBlock(activeIds)
+      const block = buildManagedBlock(activeIds)
 
       await assertLease(lockToken)
 
-      const stateBeforeWrite =
-        await getRegistryState()
+      const stateBeforeWrite = await getRegistryState()
 
-      if (
-        stateBeforeWrite.desiredRevision !==
-        currentRevision
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          return buildPendingResult(
-            lastActiveCount,
-          )
+      if (stateBeforeWrite.desiredRevision !== currentRevision) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
@@ -363,116 +269,65 @@ export async function syncAutoMod(
        * This avoids applying a block calculated from an older wiki
        * revision when another moderator changed the page meanwhile.
        */
-      const pageBeforeWrite =
-        await reddit.getWikiPage(
-          subredditName,
-          AUTOMOD_PAGE,
-        )
+      const pageBeforeWrite = await reddit.getWikiPage(
+        subredditName,
+        AUTOMOD_PAGE,
+      )
 
-      if (
-        pageBeforeWrite.revisionId !==
-        initialPage.revisionId
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          await markSyncPending(
-            currentRevision,
-          )
+      if (pageBeforeWrite.revisionId !== initialPage.revisionId) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          await markSyncPending(currentRevision)
 
-          return buildPendingResult(
-            lastActiveCount,
-          )
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
       }
 
-      const updatedContent =
-        ensureManagedBlock(
-          pageBeforeWrite.content,
-          block,
-        )
+      const updatedContent = ensureManagedBlock(pageBeforeWrite.content, block)
 
       await assertLease(lockToken)
 
-      const latestStateBeforeWrite =
-        await getRegistryState()
+      const latestStateBeforeWrite = await getRegistryState()
 
-      if (
-        latestStateBeforeWrite.desiredRevision !==
-        currentRevision
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          return buildPendingResult(
-            lastActiveCount,
-          )
+      if (latestStateBeforeWrite.desiredRevision !== currentRevision) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
       }
 
-      if (
-        updatedContent !==
-        pageBeforeWrite.content
-      ) {
+      if (updatedContent !== pageBeforeWrite.content) {
         await reddit.updateWikiPage({
           subredditName,
           page: AUTOMOD_PAGE,
           content: updatedContent,
-          reason:
-            'Gif-Guardian AutoModerator sync',
+          reason: 'Gif-Guardian AutoModerator sync',
         })
       }
 
       await assertLease(lockToken)
 
-      const latestPage =
-        await reddit.getWikiPage(
-          subredditName,
-          AUTOMOD_PAGE,
-        )
+      const latestPage = await reddit.getWikiPage(subredditName, AUTOMOD_PAGE)
 
-      const afterWriteState =
-        await getRegistryState()
+      const afterWriteState = await getRegistryState()
 
-      if (
-        afterWriteState.desiredRevision !==
-        currentRevision
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          return buildPendingResult(
-            lastActiveCount,
-          )
+      if (afterWriteState.desiredRevision !== currentRevision) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
       }
 
-      const verifiedContent =
-        ensureManagedBlock(
-          latestPage.content,
-          block,
-        )
+      const verifiedContent = ensureManagedBlock(latestPage.content, block)
 
-      if (
-        verifiedContent !==
-        latestPage.content
-      ) {
-        if (
-          attempt === MAX_SYNC_ATTEMPTS
-        ) {
-          await markSyncPending(
-            currentRevision,
-          )
+      if (verifiedContent !== latestPage.content) {
+        if (attempt === MAX_SYNC_ATTEMPTS) {
+          await markSyncPending(currentRevision)
 
-          return buildPendingResult(
-            lastActiveCount,
-          )
+          return buildPendingResult(lastActiveCount)
         }
 
         continue
@@ -480,25 +335,20 @@ export async function syncAutoMod(
 
       await assertLease(lockToken)
 
-      const committedState =
-        await markSyncSuccess(
-          currentRevision,
-          latestPage.revisionId,
-        )
+      const committedState = await markSyncSuccess(
+        currentRevision,
+        latestPage.revisionId,
+      )
 
       if (
-        committedState.desiredRevision !==
-          currentRevision ||
-        committedState.syncedRevision !==
-          currentRevision
+        committedState.desiredRevision !== currentRevision ||
+        committedState.syncedRevision !== currentRevision
       ) {
         return {
           status: 'pending',
-          revision:
-            committedState.desiredRevision,
+          revision: committedState.desiredRevision,
           activeCount: lastActiveCount,
-          wikiRevisionId:
-            committedState.wikiRevisionId,
+          wikiRevisionId: committedState.wikiRevisionId,
         }
       }
 
@@ -506,28 +356,18 @@ export async function syncAutoMod(
         status: 'synced',
         revision: currentRevision,
         activeCount: lastActiveCount,
-        wikiRevisionId:
-          latestPage.revisionId,
+        wikiRevisionId: latestPage.revisionId,
       }
     }
 
-    return buildPendingResult(
-      lastActiveCount,
-    )
+    return buildPendingResult(lastActiveCount)
   } catch (error) {
-    if (
-      error instanceof AutoModLeaseLostError
-    ) {
-      return buildPendingResult(
-        lastActiveCount,
-      )
+    if (error instanceof AutoModLeaseLostError) {
+      return buildPendingResult(lastActiveCount)
     }
 
     if (currentRevision !== undefined) {
-      await markSyncError(
-        currentRevision,
-        error,
-      )
+      await markSyncError(currentRevision, error)
     }
 
     throw error
@@ -544,10 +384,6 @@ export async function syncAutoMod(
   }
 }
 
-function formatError(
-  error: unknown,
-): string {
-  return error instanceof Error
-    ? error.message
-    : String(error)
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

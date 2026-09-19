@@ -51,10 +51,7 @@ export async function appendAudit(record: AuditRecord): Promise<void> {
 export async function listAudit(
   limit = 100,
 ): Promise<Array<AuditRecord & {id: number}>> {
-  const safeLimit = Math.min(
-    1_000,
-    Math.max(0, Math.trunc(limit)),
-  )
+  const safeLimit = Math.min(1_000, Math.max(0, Math.trunc(limit)))
 
   if (safeLimit === 0) {
     return []
@@ -67,14 +64,9 @@ export async function listAudit(
   }
 
   const start = Math.max(0, total - safeLimit)
-  const entries = await redis.zRange(
-    AUDIT_KEY,
-    start,
-    total - 1,
-    {
-      by: 'rank',
-    },
-  )
+  const entries = await redis.zRange(AUDIT_KEY, start, total - 1, {
+    by: 'rank',
+  })
 
   return entries.reverse().map(entry => JSON.parse(entry.member))
 }

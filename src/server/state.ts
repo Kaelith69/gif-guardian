@@ -41,10 +41,7 @@ export const EMPTY_STATE: RegistryState = {
 }
 
 export function parseRegistryState(value: string): RegistryState {
-  const parsed = parseJsonRecord<Partial<RegistryState>>(
-    value,
-    'state',
-  )
+  const parsed = parseJsonRecord<Partial<RegistryState>>(value, 'state')
 
   if (
     typeof parsed.desiredRevision !== 'number' ||
@@ -54,19 +51,14 @@ export function parseRegistryState(value: string): RegistryState {
     !Number.isSafeInteger(parsed.syncedRevision) ||
     parsed.syncedRevision < 0 ||
     parsed.syncedRevision > parsed.desiredRevision ||
-    !['synced', 'pending', 'error'].includes(
-      parsed.syncStatus ?? '',
-    ) ||
-    (parsed.lastSyncAt !== null &&
-      typeof parsed.lastSyncAt !== 'string') ||
+    !['synced', 'pending', 'error'].includes(parsed.syncStatus ?? '') ||
+    (parsed.lastSyncAt !== null && typeof parsed.lastSyncAt !== 'string') ||
     (parsed.lastSyncError !== null &&
       typeof parsed.lastSyncError !== 'string') ||
     (parsed.wikiRevisionId !== null &&
       typeof parsed.wikiRevisionId !== 'string')
   ) {
-    throw new Error(
-      'Invalid Gif-Guardian registry state.',
-    )
+    throw new Error('Invalid Gif-Guardian registry state.')
   }
 
   return parsed as RegistryState
@@ -93,9 +85,7 @@ function validateRegistryState(
     state.syncedRevision < 0 ||
     state.syncedRevision > state.desiredRevision
   ) {
-    throw new Error(
-      'Invalid Gif-Guardian registry revision state.',
-    )
+    throw new Error('Invalid Gif-Guardian registry revision state.')
   }
 
   if (
@@ -103,59 +93,33 @@ function validateRegistryState(
     (state.desiredRevision < previous.desiredRevision ||
       state.syncedRevision < previous.syncedRevision)
   ) {
-    throw new Error(
-      'Gif-Guardian registry revisions cannot move backwards.',
-    )
+    throw new Error('Gif-Guardian registry revisions cannot move backwards.')
   }
 
-  if (
-    state.lastSyncAt !== null &&
-    typeof state.lastSyncAt !== 'string'
-  ) {
-    throw new Error(
-      'Invalid Gif-Guardian last-sync timestamp.',
-    )
+  if (state.lastSyncAt !== null && typeof state.lastSyncAt !== 'string') {
+    throw new Error('Invalid Gif-Guardian last-sync timestamp.')
   }
 
-  if (
-    state.lastSyncError !== null &&
-    typeof state.lastSyncError !== 'string'
-  ) {
-    throw new Error(
-      'Invalid Gif-Guardian sync error.',
-    )
+  if (state.lastSyncError !== null && typeof state.lastSyncError !== 'string') {
+    throw new Error('Invalid Gif-Guardian sync error.')
   }
 
   if (
     state.wikiRevisionId !== null &&
     typeof state.wikiRevisionId !== 'string'
   ) {
-    throw new Error(
-      'Invalid Gif-Guardian wiki revision ID.',
-    )
+    throw new Error('Invalid Gif-Guardian wiki revision ID.')
   }
 }
 
-export async function withRegistryLock<T>(
-  work: () => Promise<T>,
-): Promise<T> {
+export async function withRegistryLock<T>(work: () => Promise<T>): Promise<T> {
   const token = crypto.randomUUID()
 
-  for (
-    let attempt = 0;
-    attempt < MAX_LOCK_ACQUIRE_ATTEMPTS;
-    attempt += 1
-  ) {
-    const acquired = await redis.set(
-      REGISTRY_LOCK_KEY,
-      token,
-      {
-        nx: true,
-        expiration: new Date(
-          Date.now() + REGISTRY_LOCK_TTL_SECONDS * 1_000,
-        ),
-      },
-    )
+  for (let attempt = 0; attempt < MAX_LOCK_ACQUIRE_ATTEMPTS; attempt += 1) {
+    const acquired = await redis.set(REGISTRY_LOCK_KEY, token, {
+      nx: true,
+      expiration: new Date(Date.now() + REGISTRY_LOCK_TTL_SECONDS * 1_000),
+    })
 
     if (acquired === 'OK') {
       try {
@@ -174,30 +138,21 @@ export async function withRegistryLock<T>(
     })
   }
 
-  throw new Error(
-    'Gif-Guardian registry is busy; please retry.',
-  )
+  throw new Error('Gif-Guardian registry is busy; please retry.')
 }
 
 export async function updateRegistryState(
   expectedRevision: number,
   update: (state: RegistryState) => RegistryState,
 ): Promise<RegistryState> {
-  if (
-    !Number.isSafeInteger(expectedRevision) ||
-    expectedRevision < 0
-  ) {
-    throw new Error(
-      'Invalid Gif-Guardian expected registry revision.',
-    )
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new Error('Invalid Gif-Guardian expected registry revision.')
   }
 
   return withRegistryLock(async () => {
     const value = await redis.get(STATE_KEY)
 
-    const current = value
-      ? parseRegistryState(value)
-      : EMPTY_STATE
+    const current = value ? parseRegistryState(value) : EMPTY_STATE
 
     if (current.desiredRevision !== expectedRevision) {
       return current
@@ -206,10 +161,7 @@ export async function updateRegistryState(
     const next = update(current)
     validateRegistryState(next, current)
 
-    await redis.set(
-      STATE_KEY,
-      JSON.stringify(next),
-    )
+    await redis.set(STATE_KEY, JSON.stringify(next))
 
     return next
   })
@@ -234,9 +186,7 @@ export async function claimAction(
     JSON.stringify(result),
     {
       nx: true,
-      expiration: new Date(
-        Date.now() + ACTION_TTL_SECONDS * 1000,
-      ),
+      expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
     },
   )
 
@@ -249,10 +199,7 @@ export async function getActionResult(
   const value = await redis.get(actionKey(commentId))
 
   return value
-    ? parseJsonRecord<ActionResult>(
-        value,
-        'action result',
-      )
+    ? parseJsonRecord<ActionResult>(value, 'action result')
     : undefined
 }
 
@@ -260,13 +207,7 @@ export async function saveActionResult(
   commentId: string,
   result: ActionResult,
 ): Promise<void> {
-  await redis.set(
-    actionKey(commentId),
-    JSON.stringify(result),
-    {
-      expiration: new Date(
-        Date.now() + ACTION_TTL_SECONDS * 1000,
-      ),
-    },
-  )
+  await redis.set(actionKey(commentId), JSON.stringify(result), {
+    expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
+  })
 }

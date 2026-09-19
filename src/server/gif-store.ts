@@ -34,36 +34,24 @@ type RestrictionInput = {
 type SourceType = 'comment' | 'post'
 
 function getSourceKey(sourceType: SourceType): string {
-  return sourceType === 'comment'
-    ? SOURCE_COMMENTS_KEY
-    : SOURCE_POSTS_KEY
+  return sourceType === 'comment' ? SOURCE_COMMENTS_KEY : SOURCE_POSTS_KEY
 }
 
 function serializeSourceIds(ids: string[]): string {
   return JSON.stringify([...new Set(ids)].sort())
 }
 
-function parseSourceIds(
-  value: string,
-  sourceId: string,
-): string[] {
+function parseSourceIds(value: string, sourceId: string): string[] {
   let ids: unknown
 
   try {
     ids = JSON.parse(value)
   } catch {
-    throw new Error(
-      `Invalid source-reference index for ${sourceId}.`,
-    )
+    throw new Error(`Invalid source-reference index for ${sourceId}.`)
   }
 
-  if (
-    !Array.isArray(ids) ||
-    !ids.every(id => typeof id === 'string')
-  ) {
-    throw new Error(
-      `Invalid source-reference index for ${sourceId}.`,
-    )
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string')) {
+    throw new Error(`Invalid source-reference index for ${sourceId}.`)
   }
 
   return ids
@@ -73,17 +61,12 @@ async function getSourceIds(
   sourceId: string,
   sourceType: SourceType = 'comment',
 ): Promise<string[]> {
-  const value = await redis.hGet(
-    getSourceKey(sourceType),
-    sourceId,
-  )
+  const value = await redis.hGet(getSourceKey(sourceType), sourceId)
 
   return value ? parseSourceIds(value, sourceId) : []
 }
 
-function dedupeInputs(
-  incoming: RestrictionInput[],
-): RestrictionInput[] {
+function dedupeInputs(incoming: RestrictionInput[]): RestrictionInput[] {
   const byId = new Map<string, RestrictionInput>()
 
   for (const item of incoming) {
@@ -127,24 +110,14 @@ export async function mutateRestrictions(
   }
 
   return withRegistryLock(async () => {
-    for (
-      let attempt = 0;
-      attempt < MAX_TRANSACTION_RETRIES;
-      attempt += 1
-    ) {
+    for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
       const existing = new Map<string, RestrictedGif>()
 
       for (const item of items) {
-        const value = await redis.hGet(
-          GIF_HASH_KEY,
-          item.giphyId,
-        )
+        const value = await redis.hGet(GIF_HASH_KEY, item.giphyId)
 
         if (value) {
-          existing.set(
-            item.giphyId,
-            parseRestrictedGif(value),
-          )
+          existing.set(item.giphyId, parseRestrictedGif(value))
         }
       }
 
@@ -160,10 +133,7 @@ export async function mutateRestrictions(
       for (const item of items) {
         const previous = existing.get(item.giphyId)
 
-        if (
-          previous?.status === 'active' &&
-          status === 'active'
-        ) {
+        if (previous?.status === 'active' && status === 'active') {
           alreadyRestricted.push(item.giphyId)
           records.push(previous)
           continue
@@ -174,26 +144,19 @@ export async function mutateRestrictions(
           status,
           reason: previous?.reason ?? item.reason,
           firstAddedAt: previous?.firstAddedAt ?? now,
-          firstAddedBy:
-            previous?.firstAddedBy ?? item.username,
+          firstAddedBy: previous?.firstAddedBy ?? item.username,
           lastActionAt: now,
           lastActionBy: item.username,
-          sourceComment:
-            previous?.sourceComment ?? item.sourceComment,
-          sourceUrl:
-            previous?.sourceUrl ?? item.sourceUrl,
-          sourcePost:
-            previous?.sourcePost ?? item.sourcePost,
+          sourceComment: previous?.sourceComment ?? item.sourceComment,
+          sourceUrl: previous?.sourceUrl ?? item.sourceUrl,
+          sourcePost: previous?.sourcePost ?? item.sourcePost,
         })
       }
 
       const changed = records.some(record => {
         const previous = existing.get(record.giphyId)
 
-        return (
-          JSON.stringify(previous) !==
-          JSON.stringify(record)
-        )
+        return JSON.stringify(previous) !== JSON.stringify(record)
       })
 
       if (!changed) {
@@ -217,55 +180,36 @@ export async function mutateRestrictions(
       const postIndexes = new Map<string, string[]>()
 
       for (const sourceId of affectedComments) {
-        const value = await redis.hGet(
-          SOURCE_COMMENTS_KEY,
-          sourceId,
-        )
+        const value = await redis.hGet(SOURCE_COMMENTS_KEY, sourceId)
 
         commentIndexes.set(
           sourceId,
-          value
-            ? parseSourceIds(value, sourceId)
-            : [],
+          value ? parseSourceIds(value, sourceId) : [],
         )
       }
 
       for (const sourceId of affectedPosts) {
-        const value = await redis.hGet(
-          SOURCE_POSTS_KEY,
-          sourceId,
-        )
+        const value = await redis.hGet(SOURCE_POSTS_KEY, sourceId)
 
-        postIndexes.set(
-          sourceId,
-          value
-            ? parseSourceIds(value, sourceId)
-            : [],
-        )
+        postIndexes.set(sourceId, value ? parseSourceIds(value, sourceId) : [])
       }
 
       for (const record of records) {
-        const commentIds =
-          commentIndexes.get(record.sourceComment) ?? []
+        const commentIds = commentIndexes.get(record.sourceComment) ?? []
 
-        commentIndexes.set(
-          record.sourceComment,
-          [...commentIds, record.giphyId],
-        )
+        commentIndexes.set(record.sourceComment, [
+          ...commentIds,
+          record.giphyId,
+        ])
 
-        const postIds =
-          postIndexes.get(record.sourcePost) ?? []
+        const postIds = postIndexes.get(record.sourcePost) ?? []
 
-        postIndexes.set(
-          record.sourcePost,
-          [...postIds, record.giphyId],
-        )
+        postIndexes.set(record.sourcePost, [...postIds, record.giphyId])
       }
 
       const nextState: RegistryState = {
         ...currentState,
-        desiredRevision:
-          currentState.desiredRevision + 1,
+        desiredRevision: currentState.desiredRevision + 1,
         syncStatus: 'pending',
         lastSyncError: null,
       }
@@ -282,10 +226,7 @@ export async function mutateRestrictions(
       await transaction.hSet(
         GIF_HASH_KEY,
         Object.fromEntries(
-          records.map(record => [
-            record.giphyId,
-            JSON.stringify(record),
-          ]),
+          records.map(record => [record.giphyId, JSON.stringify(record)]),
         ),
       )
 
@@ -301,10 +242,7 @@ export async function mutateRestrictions(
         })
       }
 
-      await transaction.set(
-        STATE_KEY,
-        JSON.stringify(nextState),
-      )
+      await transaction.set(STATE_KEY, JSON.stringify(nextState))
 
       const result = await transaction.exec()
 
@@ -318,9 +256,7 @@ export async function mutateRestrictions(
       }
     }
 
-    throw new Error(
-      'Gif-Guardian registry changed concurrently; please retry.',
-    )
+    throw new Error('Gif-Guardian registry changed concurrently; please retry.')
   })
 }
 
@@ -330,15 +266,8 @@ export async function setGifStatus(
   username?: string,
 ): Promise<RestrictedGif | undefined> {
   return withRegistryLock(async () => {
-    for (
-      let attempt = 0;
-      attempt < MAX_TRANSACTION_RETRIES;
-      attempt += 1
-    ) {
-      const value = await redis.hGet(
-        GIF_HASH_KEY,
-        giphyId,
-      )
+    for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
+      const value = await redis.hGet(GIF_HASH_KEY, giphyId)
 
       if (!value) {
         return undefined
@@ -364,16 +293,12 @@ export async function setGifStatus(
 
       const nextState: RegistryState = {
         ...currentState,
-        desiredRevision:
-          currentState.desiredRevision + 1,
+        desiredRevision: currentState.desiredRevision + 1,
         syncStatus: 'pending',
         lastSyncError: null,
       }
 
-      const transaction = await redis.watch(
-        GIF_HASH_KEY,
-        STATE_KEY,
-      )
+      const transaction = await redis.watch(GIF_HASH_KEY, STATE_KEY)
 
       await transaction.multi()
 
@@ -381,10 +306,7 @@ export async function setGifStatus(
         [giphyId]: JSON.stringify(updated),
       })
 
-      await transaction.set(
-        STATE_KEY,
-        JSON.stringify(nextState),
-      )
+      await transaction.set(STATE_KEY, JSON.stringify(nextState))
 
       const result = await transaction.exec()
 
@@ -393,9 +315,7 @@ export async function setGifStatus(
       }
     }
 
-    throw new Error(
-      'Gif-Guardian registry changed concurrently; please retry.',
-    )
+    throw new Error('Gif-Guardian registry changed concurrently; please retry.')
   })
 }
 
