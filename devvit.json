@@ -4,13 +4,6 @@
   "dev": {
     "subreddit": "TestEnvironmentAlpha"
   },
-  "post": {
-    "entrypoints": {
-      "default": {
-        "entry": "dashboard.html"
-      }
-    }
-  },
   "server": {},
   "menu": {
     "items": [
@@ -22,16 +15,24 @@
         "endpoint": "/internal/menu/restrict-gif"
       },
       {
-        "label": "Gif-Guardian: Dashboard",
-        "description": "Manage restricted GIFs and AutoModerator.",
+        "label": "Gif-Guardian: Manage Restricted GIFs",
+        "description": "Disable or restore restricted GIFs.",
         "location": "subreddit",
         "forUserType": "moderator",
-        "endpoint": "/internal/menu/open-dashboard"
+        "endpoint": "/internal/menu/manage-restricted-gifs"
+      },
+      {
+        "label": "Gif-Guardian: Sync AutoModerator",
+        "description": "Reconcile AutoModerator with the GIF registry.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/sync-automod"
       }
     ]
   },
   "forms": {
-    "restrictGif": "/internal/form/restrict-gif-submit"
+    "restrictGif": "/internal/form/restrict-gif-submit",
+    "manageRestrictedGifs": "/internal/form/manage-restricted-gifs-submit"
   },
   "triggers": {
     "onCommentDelete": "/internal/triggers/comment-delete",
@@ -39,7 +40,6 @@
   },
   "permissions": {
     "redis": true,
-    "media": true,
     "reddit": {
       "enable": true,
       "scope": "moderator"

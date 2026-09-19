@@ -1,19 +1,16 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {context, reddit} from '@devvit/web/server'
 import type {PartialJsonValue, UiResponse} from '@devvit/web/shared'
-import {appendAudit, listAudit} from './audit.ts'
-import {getAutoModStatus, initializeAutoMod, syncAutoMod} from './automod.ts'
+import {appendAudit} from './audit.ts'
+import {initializeAutoMod, syncAutoMod} from './automod.ts'
 import {extractGiphyIds} from './gif-parser.ts'
 import {
   getRestrictedGif,
   listRestrictedGifs,
   mutateRestrictions,
-  removeRestrictedGifs,
   removeSourceReference,
   setGifStatus,
-  setPreviewUrlIfAbsent,
 } from './gif-store.ts'
-import {createGifPreview} from './giphy-preview.ts'
 import {
   type ActionResult,
   claimAction,
@@ -22,11 +19,6 @@ import {
 } from './state.ts'
 
 type FormData = Record<string, unknown>
-
-type ApiRequest = {
-  giphyId?: unknown
-  reason?: unknown
-}
 
 export async function onReq(
   reqMsg: IncomingMessage,
@@ -47,9 +39,17 @@ export async function onReq(
 
     if (
       reqMsg.method === 'POST' &&
-      pathname === '/internal/menu/open-dashboard'
+      pathname === '/internal/menu/manage-restricted-gifs'
     ) {
-      await handleOpenDashboard(rspMsg)
+      await handleManageRestrictedGifsMenu(rspMsg)
+      return
+    }
+
+    if (
+      reqMsg.method === 'POST' &&
+      pathname === '/internal/menu/sync-automod'
+    ) {
+      await handleInitializeAutoMod(rspMsg)
       return
     }
 
@@ -61,33 +61,11 @@ export async function onReq(
       return
     }
 
-    if (reqMsg.method === 'GET' && pathname === '/api/state') {
-      await handleState(rspMsg)
-      return
-    }
-
-    if (reqMsg.method === 'POST' && pathname === '/api/disable') {
-      await handleStatusChange(reqMsg, rspMsg, 'disabled')
-      return
-    }
-
-    if (reqMsg.method === 'POST' && pathname === '/api/restore') {
-      await handleStatusChange(reqMsg, rspMsg, 'active')
-      return
-    }
-
-    if (reqMsg.method === 'POST' && pathname === '/api/remove') {
-      await handleRemoveRestrictedGifs(reqMsg, rspMsg)
-      return
-    }
-
-    if (reqMsg.method === 'POST' && pathname === '/api/refresh-preview') {
-      await handleRefreshPreview(reqMsg, rspMsg)
-      return
-    }
-
-    if (reqMsg.method === 'POST' && pathname === '/api/initialize-automod') {
-      await handleInitializeAutoMod(rspMsg)
+    if (
+      reqMsg.method === 'POST' &&
+      pathname === '/internal/form/manage-restricted-gifs-submit'
+    ) {
+      await handleManageRestrictedGifsForm(reqMsg, rspMsg)
       return
     }
 
@@ -227,6 +205,63 @@ async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
   )
 }
 
+async function handleManageRestrictedGifsMenu(
+  rspMsg: ServerResponse,
+): Promise<void> {
+  await requireModerator()
+  const records = await listRestrictedGifs()
+
+  if (records.length === 0) {
+    writeJson<UiResponse>(
+      200,
+      {showToast: 'There are no restricted GIFs to manage.'},
+      rspMsg,
+    )
+    return
+  }
+
+  writeJson<UiResponse>(
+    200,
+    {
+      showForm: {
+        name: 'manageRestrictedGifs',
+        form: {
+          title: 'Manage Restricted GIFs',
+          description:
+            records.length === 0
+              ? 'There are no restricted GIFs.'
+              : 'Select a GIF and choose whether to disable or restore it.',
+          fields: [
+            {
+              type: 'select',
+              name: 'giphyId',
+              label: 'GIF',
+              options: records.map(record => ({
+                label: `${record.giphyId} (${record.status})`,
+                value: record.giphyId,
+              })),
+              required: true,
+            },
+            {
+              type: 'select',
+              name: 'action',
+              label: 'Action',
+              options: [
+                {label: 'Disable', value: 'disabled'},
+                {label: 'Restore', value: 'active'},
+              ],
+              required: true,
+            },
+          ],
+          acceptLabel: 'Apply',
+          cancelLabel: 'Cancel',
+        },
+      },
+    },
+    rspMsg,
+  )
+}
+
 async function handleGifForm(
   reqMsg: IncomingMessage,
   rspMsg: ServerResponse,
@@ -266,22 +301,9 @@ async function handleGifForm(
       ? form.reason.trim().slice(0, 200)
       : 'pookie_cm'
 
-  const now = new Date().toISOString()
   let mutation
 
   try {
-    const previewUrls = new Map<string, string>()
-
-    for (const giphyId of giphyIds) {
-      const existing = await getRestrictedGif(giphyId)
-
-      if (existing?.previewUrl) {
-        previewUrls.set(giphyId, existing.previewUrl)
-      } else {
-        previewUrls.set(giphyId, await createGifPreview(giphyId))
-      }
-    }
-
     mutation = await mutateRestrictions(
       giphyIds.map(giphyId => ({
         giphyId,
@@ -290,7 +312,6 @@ async function handleGifForm(
         sourceComment: comment.id,
         sourceUrl: comment.url,
         sourcePost: comment.postId,
-        previewUrl: previewUrls.get(giphyId),
       })),
     )
   } catch (error) {
@@ -330,7 +351,7 @@ async function handleGifForm(
     commentId: comment.id,
     postId: comment.postId,
     moderator: username,
-    at: now,
+    at: new Date().toISOString(),
     reason,
     removedComment: removedAsSpam,
     note: syncError
@@ -361,111 +382,48 @@ async function handleGifForm(
   )
 }
 
-async function handleRefreshPreview(
+async function handleManageRestrictedGifsForm(
   reqMsg: IncomingMessage,
   rspMsg: ServerResponse,
-): Promise<void> {
-  await requireModerator()
-  const request = await readJson<{giphyId?: unknown}>(reqMsg)
-
-  if (
-    typeof request.giphyId !== 'string' ||
-    !/^[A-Za-z0-9_-]+$/.test(request.giphyId)
-  ) {
-    throw new Error('A valid GIPHY ID is required.')
-  }
-
-  const existing = await getRestrictedGif(request.giphyId)
-
-  if (!existing) {
-    throw new Error(`GIF ${request.giphyId} is not in the registry.`)
-  }
-
-  if (existing.previewUrl) {
-    writeJson(200, {ok: true, gif: existing}, rspMsg)
-    return
-  }
-
-  const previewUrl = await createGifPreview(request.giphyId)
-  const updated = await setPreviewUrlIfAbsent(request.giphyId, previewUrl)
-
-  writeJson(200, {ok: true, gif: updated}, rspMsg)
-}
-
-async function handleOpenDashboard(rspMsg: ServerResponse): Promise<void> {
-  await requireModerator()
-
-  const post = await reddit.submitCustomPost({
-    title: 'Gif-Guardian Dashboard',
-  })
-
-  writeJson<UiResponse>(
-    200,
-    {
-      navigateTo: post.url,
-    },
-    rspMsg,
-  )
-}
-
-async function handleState(rspMsg: ServerResponse): Promise<void> {
-  await requireModerator()
-
-  const gifs = await listRestrictedGifs()
-  const audit = await listAudit(100)
-  const subredditName = await getSubredditName()
-
-  const automod = await getAutoModStatus(subredditName)
-
-  writeJson(
-    200,
-    {
-      gifs,
-      audit,
-      automod,
-    },
-    rspMsg,
-  )
-}
-
-async function handleStatusChange(
-  reqMsg: IncomingMessage,
-  rspMsg: ServerResponse,
-  status: 'active' | 'disabled',
 ): Promise<void> {
   const {subredditName, username} = await requireModerator()
+  const form = await readJson<{
+    giphyId?: unknown
+    action?: unknown
+  }>(reqMsg)
 
-  const request = await readJson<ApiRequest>(reqMsg)
-
-  if (typeof request.giphyId !== 'string' || request.giphyId.trim() === '') {
-    throw new Error('A valid GIPHY ID is required.')
+  if (
+    typeof form.giphyId !== 'string' ||
+    !/^[A-Za-z0-9_-]+$/.test(form.giphyId) ||
+    (form.action !== 'active' && form.action !== 'disabled')
+  ) {
+    throw new Error('A valid GIF and management action are required.')
   }
 
-  const giphyId = request.giphyId.trim()
-  const existing = await getRestrictedGif(giphyId)
+  const existing = await getRestrictedGif(form.giphyId)
 
   if (!existing) {
-    throw new Error(`GIF ${giphyId} is not in the registry.`)
+    throw new Error(`GIF ${form.giphyId} is not in the registry.`)
   }
 
-  const updated = await setGifStatus(giphyId, status, username)
+  const updated = await setGifStatus(form.giphyId, form.action, username)
 
   if (!updated) {
-    throw new Error(`GIF ${giphyId} is not in the registry.`)
+    throw new Error(`GIF ${form.giphyId} is not in the registry.`)
   }
 
   let syncError: unknown
 
   try {
     await syncAutoMod(subredditName)
-  } catch (err) {
-    syncError = err
+  } catch (error) {
+    syncError = error
   }
 
   await appendAudit({
-    action: status === 'disabled' ? 'disable' : 'restore',
+    action: form.action === 'disabled' ? 'disable' : 'restore',
     status: syncError ? 'partial' : 'success',
-    giphyIds: [giphyId],
+    giphyIds: [form.giphyId],
     commentId: existing.sourceComment,
     postId: existing.sourcePost,
     moderator: username,
@@ -476,61 +434,15 @@ async function handleStatusChange(
       : undefined,
   })
 
-  writeJson(
+  writeJson<UiResponse>(
     200,
     {
-      ok: !syncError,
-      gif: updated,
-      syncError: syncError ? String(syncError) : undefined,
+      showToast: syncError
+        ? `GIF ${form.giphyId} updated, but AutoModerator sync failed.`
+        : `GIF ${form.giphyId} ${form.action === 'disabled' ? 'disabled' : 'restored'}.`,
     },
     rspMsg,
   )
-}
-
-async function handleRemoveRestrictedGifs(
-  reqMsg: IncomingMessage,
-  rspMsg: ServerResponse,
-): Promise<void> {
-  const {subredditName, username} = await requireModerator()
-  const request = await readJson<{giphyIds?: unknown}>(reqMsg)
-
-  if (
-    !Array.isArray(request.giphyIds) ||
-    request.giphyIds.length === 0 ||
-    request.giphyIds.length > 100 ||
-    !request.giphyIds.every(
-      id => typeof id === 'string' && /^[A-Za-z0-9_-]+$/.test(id),
-    )
-  ) {
-    throw new Error('Select between 1 and 100 valid GIFs to remove.')
-  }
-
-  const giphyIds = [...new Set(request.giphyIds)]
-  const removed = await removeRestrictedGifs(giphyIds)
-
-  try {
-    await syncAutoMod(subredditName)
-  } catch (error) {
-    await appendAudit({
-      action: 'sync-error',
-      status: 'partial',
-      giphyIds: removed,
-      moderator: username,
-      at: new Date().toISOString(),
-      note: `GIF removal saved, but AutoModerator sync failed: ${error}`,
-    })
-    throw error
-  }
-
-  await appendAudit({
-    action: 'unban',
-    status: 'success',
-    giphyIds: removed,
-    moderator: username,
-    at: new Date().toISOString(),
-  })
-
-  writeJson(200, {ok: true, removed}, rspMsg)
 }
 
 async function handleSourceDelete(
