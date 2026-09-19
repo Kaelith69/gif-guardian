@@ -1,0 +1,60 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="100%"
+  viewBox="0 0 900 200"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Gif-Guardian</title>
+  <desc id="desc">
+    A moderator tool for restricting GIPHY GIFs and syncing AutoModerator.
+  </desc>
+  <rect width="900" height="200" fill="#0d1117" />
+  <g fill="none" stroke="#58a6ff" stroke-width="2" opacity="0.75">
+    <path d="M36 34h86v42H36z" />
+    <path d="M778 126h86v42h-86z" />
+    <path d="M72 76v40h46" />
+    <path d="M828 126V84h-46" />
+  </g>
+  <g fill="#f0b429">
+    <circle cx="36" cy="34" r="4" />
+    <circle cx="864" cy="168" r="4" />
+  </g>
+  <text
+    x="450"
+    y="78"
+    fill="#f0f6fc"
+    font-family="system-ui, -apple-system, monospace"
+    font-size="42"
+    font-weight="700"
+    text-anchor="middle"
+  >
+    Gif-Guardian
+  </text>
+  <text
+    x="450"
+    y="108"
+    fill="#8b949e"
+    font-family="system-ui, -apple-system, monospace"
+    font-size="16"
+    text-anchor="middle"
+  >
+    Moderator-first GIPHY restriction and AutoModerator control
+  </text>
+  <g
+    font-family="system-ui, -apple-system, monospace"
+    font-size="12"
+    text-anchor="middle"
+  >
+    <rect x="232" y="140" width="92" height="28" rx="14" fill="#1f6feb" />
+    <text x="278" y="158" fill="#ffffff">TypeScript</text>
+    <rect x="336" y="140" width="76" height="28" rx="14" fill="#238636" />
+    <text x="374" y="158" fill="#ffffff">Devvit</text>
+    <rect x="424" y="140" width="70" height="28" rx="14" fill="#9e6a03" />
+    <text x="459" y="158" fill="#ffffff">Redis</text>
+    <rect x="506" y="140" width="86" height="28" rx="14" fill="#8957e5" />
+    <text x="549" y="158" fill="#ffffff">Node 24</text>
+    <rect x="604" y="140" width="64" height="28" rx="14" fill="#6e7681" />
+    <text x="636" y="158" fill="#ffffff">Reddit</text>
+  </g>
+</svg>

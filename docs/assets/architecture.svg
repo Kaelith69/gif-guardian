@@ -1,0 +1,149 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="100%"
+  viewBox="0 0 900 500"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Gif-Guardian architecture</title>
+  <desc id="desc">
+    Moderator menus and dashboard call a Devvit server, which uses Redis and
+    Reddit wiki AutoModerator configuration.
+  </desc>
+  <defs>
+    <marker
+      id="arrow"
+      viewBox="0 0 10 10"
+      refX="9"
+      refY="5"
+      markerWidth="7"
+      markerHeight="7"
+      orient="auto-start-reverse"
+    >
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e" />
+    </marker>
+  </defs>
+  <rect width="900" height="500" fill="#0d1117" />
+  <g font-family="system-ui, -apple-system, monospace" font-size="13">
+    <rect
+      x="28"
+      y="32"
+      width="244"
+      height="420"
+      rx="8"
+      fill="#111820"
+      stroke="#58a6ff"
+      stroke-width="2"
+      stroke-dasharray="8 6"
+    />
+    <text x="48" y="60" fill="#79c0ff" font-weight="700">
+      Moderator surfaces
+    </text>
+    <rect x="52" y="96" width="196" height="78" rx="8" fill="#1f6feb" />
+    <text x="150" y="126" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Comment menu
+    </text>
+    <text x="150" y="149" fill="#dbeafe" text-anchor="middle">
+      Restrict GIF + spam remove
+    </text>
+    <rect x="52" y="210" width="196" height="78" rx="8" fill="#1f6feb" />
+    <text x="150" y="240" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Subreddit menu
+    </text>
+    <text x="150" y="263" fill="#dbeafe" text-anchor="middle">
+      Open dashboard post
+    </text>
+    <rect x="52" y="324" width="196" height="78" rx="8" fill="#1f6feb" />
+    <text x="150" y="354" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Dashboard
+    </text>
+    <text x="150" y="377" fill="#dbeafe" text-anchor="middle">
+      Status, audit, sync controls
+    </text>
+
+    <rect
+      x="324"
+      y="32"
+      width="252"
+      height="420"
+      rx="8"
+      fill="#17131e"
+      stroke="#a371f7"
+      stroke-width="2"
+      stroke-dasharray="8 6"
+    />
+    <text x="344" y="60" fill="#d2a8ff" font-weight="700">Devvit server</text>
+    <rect x="348" y="96" width="204" height="78" rx="8" fill="#8957e5" />
+    <text x="450" y="126" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Request router
+    </text>
+    <text x="450" y="149" fill="#f1e8ff" text-anchor="middle">
+      Moderator checks + forms
+    </text>
+    <rect x="348" y="210" width="204" height="78" rx="8" fill="#8957e5" />
+    <text x="450" y="240" fill="#ffffff" text-anchor="middle" font-weight="700">
+      GIF parser
+    </text>
+    <text x="450" y="263" fill="#f1e8ff" text-anchor="middle">
+      Extract GIPHY embed IDs
+    </text>
+    <rect x="348" y="324" width="204" height="78" rx="8" fill="#8957e5" />
+    <text x="450" y="354" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Sync + audit services
+    </text>
+    <text x="450" y="377" fill="#f1e8ff" text-anchor="middle">
+      Registry, wiki block, history
+    </text>
+
+    <rect
+      x="628"
+      y="32"
+      width="244"
+      height="420"
+      rx="8"
+      fill="#141a16"
+      stroke="#3fb950"
+      stroke-width="2"
+      stroke-dasharray="8 6"
+    />
+    <text x="648" y="60" fill="#7ee787" font-weight="700">Devvit services</text>
+    <rect x="652" y="96" width="196" height="78" rx="8" fill="#238636" />
+    <text x="750" y="126" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Redis
+    </text>
+    <text x="750" y="149" fill="#dcffe4" text-anchor="middle">
+      Restricted GIF hash + audit
+    </text>
+    <rect x="652" y="210" width="196" height="78" rx="8" fill="#6e7681" />
+    <text x="750" y="240" fill="#ffffff" text-anchor="middle" font-weight="700">
+      Reddit API
+    </text>
+    <text x="750" y="263" fill="#f0f6fc" text-anchor="middle">
+      Comments, menus, moderation
+    </text>
+    <rect x="652" y="324" width="196" height="78" rx="8" fill="#9e6a03" />
+    <text x="750" y="354" fill="#ffffff" text-anchor="middle" font-weight="700">
+      AutoModerator wiki
+    </text>
+    <text x="750" y="377" fill="#fff4cc" text-anchor="middle">
+      Managed spam rule block
+    </text>
+
+    <g fill="none" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M272 135h72" />
+      <path d="M272 249h72" />
+      <path d="M272 363h72" />
+      <path d="M552 135h100" />
+      <path d="M552 249h100" />
+      <path d="M552 363h100" />
+    </g>
+    <g fill="#8b949e" font-size="12">
+      <text x="286" y="126">HTTP</text>
+      <text x="286" y="240">HTTP</text>
+      <text x="286" y="354">HTTP</text>
+      <text x="582" y="126">Redis</text>
+      <text x="580" y="240">Reddit API</text>
+      <text x="576" y="354">wiki update</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,117 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="100%"
+  viewBox="0 0 900 420"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Gif-Guardian restriction flow</title>
+  <desc id="desc">
+    A moderator chooses Restrict GIF, the app validates the comment, saves
+    records, syncs AutoModerator, and spam-removes the current comment.
+  </desc>
+  <defs>
+    <marker
+      id="arrow"
+      viewBox="0 0 10 10"
+      refX="9"
+      refY="5"
+      markerWidth="7"
+      markerHeight="7"
+      orient="auto-start-reverse"
+    >
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e" />
+    </marker>
+  </defs>
+  <rect width="900" height="420" fill="#0d1117" />
+  <g font-family="system-ui, -apple-system, monospace" font-size="13">
+    <rect x="34" y="156" width="138" height="72" rx="8" fill="#168f85" />
+    <text x="103" y="184" fill="#ffffff" text-anchor="middle" font-weight="700">
+      1. Choose action
+    </text>
+    <text x="103" y="207" fill="#dcfffa" text-anchor="middle">
+      Moderator comment menu
+    </text>
+
+    <rect x="216" y="156" width="138" height="72" rx="8" fill="#168f85" />
+    <text x="285" y="184" fill="#ffffff" text-anchor="middle" font-weight="700">
+      2. Parse comment
+    </text>
+    <text x="285" y="207" fill="#dcfffa" text-anchor="middle">
+      Find GIPHY IDs
+    </text>
+
+    <rect x="398" y="156" width="138" height="72" rx="8" fill="#168f85" />
+    <text x="467" y="184" fill="#ffffff" text-anchor="middle" font-weight="700">
+      3. Save records
+    </text>
+    <text x="467" y="207" fill="#dcfffa" text-anchor="middle">
+      Redis active status
+    </text>
+
+    <rect x="580" y="156" width="138" height="72" rx="8" fill="#168f85" />
+    <text x="649" y="184" fill="#ffffff" text-anchor="middle" font-weight="700">
+      4. Sync rule
+    </text>
+    <text x="649" y="207" fill="#dcfffa" text-anchor="middle">
+      AutoModerator spam
+    </text>
+
+    <rect x="762" y="156" width="104" height="72" rx="8" fill="#168f85" />
+    <text x="814" y="184" fill="#ffffff" text-anchor="middle" font-weight="700">
+      5. Spam
+    </text>
+    <text x="814" y="207" fill="#dcfffa" text-anchor="middle">
+      Current comment
+    </text>
+
+    <g fill="none" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M172 192h44" />
+      <path d="M354 192h44" />
+      <path d="M536 192h44" />
+      <path d="M718 192h44" />
+      <path d="M649 228v84H467v-84" />
+    </g>
+
+    <g transform="translate(467 312)">
+      <rect
+        x="-76"
+        y="-28"
+        width="152"
+        height="56"
+        fill="#b87900"
+        transform="rotate(45)"
+      />
+      <text x="0" y="-3" fill="#ffffff" text-anchor="middle" font-weight="700">
+        Sync failed?
+      </text>
+      <text x="0" y="16" fill="#fff4cc" text-anchor="middle">
+        Restore Redis records
+      </text>
+    </g>
+    <path
+      d="M391 352H150V228"
+      fill="none"
+      stroke="#ff7b72"
+      stroke-width="2"
+      marker-end="url(#arrow)"
+    />
+    <text x="182" y="374" fill="#ff7b72" font-size="12">
+      error path: return failure
+    </text>
+
+    <text
+      x="450"
+      y="70"
+      fill="#f0f6fc"
+      font-size="24"
+      font-weight="700"
+      text-anchor="middle"
+    >
+      Restrict a GIF comment
+    </text>
+    <text x="450" y="100" fill="#8b949e" text-anchor="middle">
+      The same restriction feeds future AutoModerator spam matches.
+    </text>
+  </g>
+</svg>
