@@ -8,6 +8,7 @@ import {
   getRestrictedGif,
   listRestrictedGifs,
   mutateRestrictions,
+  removeRestrictedGifs,
   removeSourceReference,
   setGifStatus,
 } from './gif-store.ts'
@@ -70,6 +71,11 @@ export async function onReq(
 
     if (reqMsg.method === 'POST' && pathname === '/api/restore') {
       await handleStatusChange(reqMsg, rspMsg, 'active')
+      return
+    }
+
+    if (reqMsg.method === 'POST' && pathname === '/api/remove') {
+      await handleRemoveRestrictedGifs(reqMsg, rspMsg)
       return
     }
 
@@ -428,6 +434,52 @@ async function handleStatusChange(
     },
     rspMsg,
   )
+}
+
+async function handleRemoveRestrictedGifs(
+  reqMsg: IncomingMessage,
+  rspMsg: ServerResponse,
+): Promise<void> {
+  const {subredditName, username} = await requireModerator()
+  const request = await readJson<{giphyIds?: unknown}>(reqMsg)
+
+  if (
+    !Array.isArray(request.giphyIds) ||
+    request.giphyIds.length === 0 ||
+    request.giphyIds.length > 100 ||
+    !request.giphyIds.every(
+      id => typeof id === 'string' && /^[A-Za-z0-9_-]+$/.test(id),
+    )
+  ) {
+    throw new Error('Select between 1 and 100 valid GIFs to remove.')
+  }
+
+  const giphyIds = [...new Set(request.giphyIds)]
+  const removed = await removeRestrictedGifs(giphyIds)
+
+  try {
+    await syncAutoMod(subredditName)
+  } catch (error) {
+    await appendAudit({
+      action: 'sync-error',
+      status: 'partial',
+      giphyIds: removed,
+      moderator: username,
+      at: new Date().toISOString(),
+      note: `GIF removal saved, but AutoModerator sync failed: ${error}`,
+    })
+    throw error
+  }
+
+  await appendAudit({
+    action: 'unban',
+    status: 'success',
+    giphyIds: removed,
+    moderator: username,
+    at: new Date().toISOString(),
+  })
+
+  writeJson(200, {ok: true, removed}, rspMsg)
 }
 
 async function handleSourceDelete(

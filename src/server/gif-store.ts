@@ -215,6 +215,78 @@ export async function setGifStatus(
   return mutation.records[0]
 }
 
+export async function removeRestrictedGifs(
+  giphyIds: string[],
+): Promise<string[]> {
+  const requested = [...new Set(giphyIds)]
+
+  for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
+    const transaction = await redis.watch(
+      GIF_HASH_KEY,
+      SOURCE_COMMENTS_KEY,
+      SOURCE_POSTS_KEY,
+      STATE_KEY,
+    )
+    const records = new Map<string, RestrictedGif>()
+
+    for (const giphyId of requested) {
+      const record = await getRestrictedGif(giphyId)
+
+      if (record) {
+        records.set(giphyId, record)
+      }
+    }
+
+    if (records.size === 0) {
+      await transaction.discard()
+      return []
+    }
+
+    const state = await getRegistryState()
+    const nextState: RegistryState = {
+      ...state,
+      desiredRevision: state.desiredRevision + 1,
+      syncStatus: 'pending',
+      lastSyncError: null,
+    }
+
+    await transaction.multi()
+    await transaction.hDel(GIF_HASH_KEY, [...records.keys()])
+
+    for (const record of records.values()) {
+      const commentIds = await getSourceIds(record.sourceComment)
+      const postIds = await getSourceIds(record.sourcePost, 'post')
+
+      const nextComments = commentIds.filter(id => id !== record.giphyId)
+      const nextPosts = postIds.filter(id => id !== record.giphyId)
+
+      if (nextComments.length === 0) {
+        await transaction.hDel(SOURCE_COMMENTS_KEY, [record.sourceComment])
+      } else {
+        await transaction.hSet(SOURCE_COMMENTS_KEY, {
+          [record.sourceComment]: serializeSourceIds(nextComments),
+        })
+      }
+
+      if (nextPosts.length === 0) {
+        await transaction.hDel(SOURCE_POSTS_KEY, [record.sourcePost])
+      } else {
+        await transaction.hSet(SOURCE_POSTS_KEY, {
+          [record.sourcePost]: serializeSourceIds(nextPosts),
+        })
+      }
+    }
+
+    await transaction.set(STATE_KEY, JSON.stringify(nextState))
+
+    if (await transaction.exec()) {
+      return [...records.keys()]
+    }
+  }
+
+  throw new Error('GIF registry changed concurrently; please retry.')
+}
+
 export async function markSyncPending(): Promise<RegistryState> {
   const state = await getRegistryState()
   const next = {...state, syncStatus: 'pending' as const, lastSyncError: null}

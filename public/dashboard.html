@@ -305,6 +305,169 @@
       color: var(--text-muted);
       font-size: 13px;
     }
+
+    .blacklist-button {
+      margin: 0 20px 20px;
+      width: calc(100% - 40px);
+      min-height: 40px;
+      border: 1px solid var(--green-main);
+      border-radius: 6px;
+      color: var(--text-white);
+      background: transparent;
+    }
+
+    .blacklist-button:hover {
+      background: var(--green-main);
+    }
+
+    .blacklist-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      overflow: auto;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.88);
+    }
+
+    .blacklist-modal.open {
+      display: block;
+    }
+
+    .blacklist-panel {
+      position: relative;
+      width: min(1100px, 100%);
+      min-height: calc(100vh - 48px);
+      margin: 0 auto;
+      padding: 24px 24px 88px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-dim);
+      border-radius: 8px;
+    }
+
+    .blacklist-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .blacklist-header h2 {
+      margin: 0;
+      color: var(--text-white);
+      font-size: 20px;
+    }
+
+    .blacklist-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 14px;
+    }
+
+    .blacklist-card {
+      position: relative;
+      min-height: 220px;
+      overflow: hidden;
+      background: var(--bg-box);
+      border: 1px solid var(--border-dim);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .blacklist-card:focus-visible,
+    .blacklist-card:hover,
+    .blacklist-card.expanded {
+      border-color: var(--green-main);
+      outline: none;
+    }
+
+    .blacklist-card input {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 2;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--green-main);
+    }
+
+    .gif-preview {
+      display: block;
+      width: 100%;
+      height: 170px;
+      border: 0;
+      background: #000;
+    }
+
+    .gif-card-label {
+      padding: 10px 12px;
+      color: var(--text-white);
+      font-weight: 700;
+    }
+
+    .gif-details {
+      position: absolute;
+      inset: auto 0 0;
+      padding: 12px;
+      color: var(--text-main);
+      background: rgba(0, 0, 0, 0.9);
+      transform: translateY(100%);
+      transition: transform 0.16s ease;
+    }
+
+    .blacklist-card:hover .gif-details,
+    .blacklist-card:focus-visible .gif-details,
+    .blacklist-card.expanded .gif-details {
+      transform: translateY(0);
+    }
+
+    .gif-details div {
+      margin-top: 4px;
+    }
+
+    .gif-details strong {
+      color: var(--text-white);
+    }
+
+    .remove-selected {
+      position: fixed;
+      right: 36px;
+      bottom: 28px;
+      z-index: 12;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 22px;
+      color: var(--text-white);
+      background: var(--red-main);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    }
+
+    @media (max-width: 600px) {
+      .blacklist-modal {
+        padding: 0;
+      }
+
+      .blacklist-panel {
+        min-height: 100vh;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .blacklist-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .gif-preview {
+        height: 135px;
+      }
+
+      .remove-selected {
+        right: 20px;
+        bottom: 20px;
+      }
+    }
     </style>
   </head>
   <body>
@@ -353,10 +516,48 @@
         <div class="metric-box"><span id="audit-count">0</span> Logs</div>
       </div>
 
+      <button type="button" id="open-blacklist" class="blacklist-button">
+        Blacklist
+      </button>
+
       <div class="registry" id="gif-list">
         <div class="empty">Loading...</div>
       </div>
     </main>
+
+    <div id="blacklist-modal" class="blacklist-modal" aria-hidden="true">
+      <section
+        class="blacklist-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="blacklist-title"
+      >
+        <div class="blacklist-header">
+          <h2 id="blacklist-title">Blacklist</h2>
+          <button
+            type="button"
+            id="close-blacklist"
+            class="btn-icon"
+            aria-label="Close blacklist"
+          >
+            Close
+          </button>
+        </div>
+        <label>
+          <input type="checkbox" id="select-all-blacklist">
+          Select all
+        </label>
+        <div id="blacklist-grid" class="blacklist-grid"></div>
+        <button
+          type="button"
+          id="remove-selected"
+          class="remove-selected"
+          disabled
+        >
+          Remove selected
+        </button>
+      </section>
+    </div>
 
     <script src="dashboard.js"></script>
   </body>

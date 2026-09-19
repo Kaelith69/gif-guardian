@@ -10,6 +10,7 @@ export type AuditAction =
   | 'already-restricted'
   | 'disable'
   | 'restore'
+  | 'unban'
   | 'initialize-automod'
   | 'sync'
   | 'sync-error'
