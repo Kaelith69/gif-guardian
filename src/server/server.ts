@@ -106,17 +106,14 @@ async function requireModerator(): Promise<{
 }> {
   const subredditName = await getSubredditName()
 
-  const username = await reddit.getCurrentUsername()
+  const [username, moderators] = await Promise.all([
+    reddit.getCurrentUsername(),
+    reddit.getModerators({subredditName}).all(),
+  ])
 
   if (!username) {
     throw new Error('Gif-Guardian could not determine the current moderator.')
   }
-
-  const moderators = await reddit
-    .getModerators({
-      subredditName,
-    })
-    .all()
 
   const normalizedUsername = username.toLowerCase()
 
@@ -156,9 +153,12 @@ async function getCommentContext() {
 }
 
 async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
-  await requireModerator()
+  const [, commentContext] = await Promise.all([
+    requireModerator(),
+    getCommentContext(),
+  ])
 
-  const {comment, giphyIds} = await getCommentContext()
+  const {comment, giphyIds} = commentContext
 
   writeJson<UiResponse>(
     200,
