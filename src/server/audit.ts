@@ -1,4 +1,4 @@
-import {redis} from '@devvit/web/server'
+import {redis} from '@devvit/redis'
 import {
   AUDIT_KEY,
   AUDIT_RETENTION_SECONDS,

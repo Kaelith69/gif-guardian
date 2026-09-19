@@ -1,4 +1,4 @@
-import {redis} from '@devvit/web/server'
+import {redis} from '@devvit/redis'
 import {parseJsonRecord} from './validation.ts'
 
 export const GIF_HASH_KEY = 'gif-guardian:restricted-gifs'

@@ -1,4 +1,4 @@
-import {redis} from '@devvit/web/server'
+import {redis} from '@devvit/redis'
 import type {GifStatus, RestrictedGif} from './gif.ts'
 import {
   EMPTY_STATE,

@@ -1,4 +1,5 @@
-import {reddit, redis} from '@devvit/web/server'
+import {reddit} from '@devvit/reddit'
+import {redis} from '@devvit/redis'
 
 import {listRestrictedGifs} from './gif-store.ts'
 import {

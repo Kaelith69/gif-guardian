@@ -1,6 +1,7 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
-import {context, reddit} from '@devvit/web/server'
-import type {PartialJsonValue, UiResponse} from '@devvit/web/shared'
+import {reddit} from '@devvit/reddit'
+import {context} from '@devvit/server'
+import type {PartialJsonValue, UiResponse} from '@devvit/shared'
 
 import {appendAudit} from './audit.ts'
 import {type SyncResult, syncAutoMod} from './automod.ts'
