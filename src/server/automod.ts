@@ -12,8 +12,8 @@ import {
 
 const AUTOMOD_PAGE = 'config/automoderator'
 
-const START_MARKER = '# === COCONAAD GIF GUARD START ==='
-const END_MARKER = '# === COCONAAD GIF GUARD END ==='
+const START_MARKER = '# === GIF GUARDIAN START ==='
+const END_MARKER = '# === GIF GUARDIAN END ==='
 
 const MAX_SYNC_ATTEMPTS = 3
 

@@ -19,7 +19,7 @@ test('builds an explicit empty restriction block', () => {
   const block = buildManagedBlock([])
 
   assert.match(block, /no active GIF restrictions/)
-  assert.match(block, /GIF GUARDIAN END/)
+  assert.match(block, /# === GIF GUARDIAN END ===/)
 })
 
 test('preserves unmanaged content while replacing the managed block', () => {
