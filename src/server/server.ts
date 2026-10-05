@@ -543,12 +543,10 @@ async function handleSyncAutoMod(rspMsg: ServerResponse): Promise<void> {
         : undefined,
     })
 
-    writeJson(
+    writeJson<UiResponse>(
       200,
       {
-        ok: true,
-        status: result.status,
-        message: pending
+        showToast: pending
           ? 'Gif-Guardian AutoModerator synchronization is still pending.'
           : 'Gif-Guardian AutoModerator is synchronized.',
       },

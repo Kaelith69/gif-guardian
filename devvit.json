@@ -44,5 +44,8 @@
       "enable": true,
       "scope": "moderator"
     }
+  },
+  "marketingAssets": {
+    "icon": "assets/icon.png"
   }
 }
