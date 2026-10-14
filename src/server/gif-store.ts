@@ -125,8 +125,18 @@ export async function mutateRestrictions(
         const previous = existing.get(item.giphyId)
 
         if (previous?.status === 'active' && status === 'active') {
-          alreadyRestricted.push(item.giphyId)
-          records.push(previous)
+          if (previous.reason === item.reason) {
+            alreadyRestricted.push(item.giphyId)
+            records.push(previous)
+          } else {
+            records.push({
+              ...previous,
+              reason: item.reason,
+              lastActionAt: now,
+              lastActionBy: item.username,
+            })
+          }
+
           continue
         }
 

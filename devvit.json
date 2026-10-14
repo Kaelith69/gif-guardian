@@ -15,13 +15,6 @@
         "endpoint": "/internal/menu/restrict-gif"
       },
       {
-        "label": "Gif-Guardian: Manage Restricted GIFs",
-        "description": "Disable or restore restricted GIFs.",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/manage-restricted-gifs"
-      },
-      {
         "label": "Gif-Guardian: Sync AutoModerator",
         "description": "Reconcile AutoModerator with the GIF registry.",
         "location": "subreddit",
@@ -31,8 +24,7 @@
     ]
   },
   "forms": {
-    "restrictGif": "/internal/form/restrict-gif-submit",
-    "manageRestrictedGifs": "/internal/form/manage-restricted-gifs-submit"
+    "restrictGif": "/internal/form/restrict-gif-submit"
   },
   "triggers": {
     "onCommentDelete": "/internal/triggers/comment-delete",

@@ -11,8 +11,38 @@ test('builds a spam rule for active IDs', () => {
   const block = buildManagedBlock(['ABC', 'XYZ'])
 
   assert.match(block, /# === GIF GUARDIAN START ===/)
+  assert.match(block, /type: comment/)
+  assert.match(block, /type: submission/)
   assert.match(block, /action: spam/)
   assert.match(block, /ABC\|XYZ/)
+  assert.match(block, /body \(includes, regex\):/)
+})
+
+test('matches exact GIF embeds in both post and comment rules', () => {
+  const rule = buildRule(['ABC'])
+  const regexSource = rule.match(/body \(includes, regex\): '([^']+)'/)?.[1]
+
+  assert.ok(regexSource)
+
+  const regex = new RegExp(regexSource)
+
+  assert.match('![gif](giphy|ABC)', regex)
+  assert.match('![gif](giphy|ABC|width=400&height=300)', regex)
+  assert.match('Post text ![gif](giphy|ABC)', regex)
+  assert.doesNotMatch('![gif](giphy|ABCD)', regex)
+  assert.doesNotMatch('![gif](giphy|XYZ)', regex)
+
+  assert.match(buildRule(['ABC'], 'reason', 'submission'), /type: submission/)
+})
+
+test('includes each stored restriction reason in the managed block', () => {
+  const block = buildManagedBlock([
+    {giphyId: 'ABC', reason: 'Policy violation'},
+    {giphyId: 'XYZ', reason: 'Quoted "reason"'},
+  ])
+
+  assert.match(block, /action_reason: "Policy violation"/)
+  assert.match(block, /action_reason: "Quoted \\"reason\\""/)
 })
 
 test('builds an explicit empty restriction block', () => {

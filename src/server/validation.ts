@@ -86,7 +86,6 @@ export function parseRestrictedGif(value: string): RestrictedGif {
   return {
     giphyId,
     status,
-    reason: requireString(record.reason, 'reason'),
     firstAddedAt: requireTimestamp(record.firstAddedAt, 'firstAddedAt'),
     firstAddedBy:
       record.firstAddedBy === undefined

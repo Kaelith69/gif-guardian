@@ -28,6 +28,65 @@ export type AuditRecord = {
   note?: string
 }
 
+const AUDIT_ACTIONS: AuditAction[] = [
+  'restrict',
+  'already-restricted',
+  'disable',
+  'restore',
+  'sync',
+  'sync-error',
+]
+
+const AUDIT_STATUSES: AuditStatus[] = ['success', 'partial', 'failed']
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+export function parseAuditRecord(value: string): AuditRecord & {id: number} {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error('Invalid Gif-Guardian audit JSON.')
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid Gif-Guardian audit record.')
+  }
+
+  if (
+    typeof parsed.id !== 'number' ||
+    !Number.isSafeInteger(parsed.id) ||
+    parsed.id <= 0 ||
+    !AUDIT_ACTIONS.includes(parsed.action as AuditAction) ||
+    !AUDIT_STATUSES.includes(parsed.status as AuditStatus) ||
+    typeof parsed.moderator !== 'string' ||
+    parsed.moderator.trim() === '' ||
+    typeof parsed.at !== 'string' ||
+    !Number.isFinite(Date.parse(parsed.at))
+  ) {
+    throw new Error('Invalid Gif-Guardian audit record.')
+  }
+
+  if (
+    (parsed.giphyIds !== undefined &&
+      (!Array.isArray(parsed.giphyIds) ||
+        !parsed.giphyIds.every(id => typeof id === 'string'))) ||
+    (parsed.removedComment !== undefined &&
+      typeof parsed.removedComment !== 'boolean') ||
+    (parsed.reason !== undefined && typeof parsed.reason !== 'string') ||
+    (parsed.note !== undefined && typeof parsed.note !== 'string') ||
+    (parsed.commentId !== undefined && typeof parsed.commentId !== 'string') ||
+    (parsed.postId !== undefined && typeof parsed.postId !== 'string')
+  ) {
+    throw new Error('Invalid Gif-Guardian audit record.')
+  }
+
+  return parsed as AuditRecord & {id: number}
+}
+
 export async function appendAudit(record: AuditRecord): Promise<void> {
   const sequence = await redis.incrBy(AUDIT_SEQUENCE_KEY, 1)
 
@@ -68,5 +127,18 @@ export async function listAudit(
     by: 'rank',
   })
 
-  return entries.reverse().map(entry => JSON.parse(entry.member))
+  return entries
+    .flatMap(entry => {
+      try {
+        return [parseAuditRecord(entry.member)]
+      } catch (error) {
+        console.error(
+          `Gif-Guardian skipped a malformed audit record; ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        )
+        return []
+      }
+    })
+    .sort((a, b) => b.id - a.id)
 }

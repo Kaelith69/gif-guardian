@@ -209,7 +209,7 @@ async function handleManageRestrictedGifsMenu(
               name: 'giphyId',
               label: 'GIF',
               options: records.map(record => ({
-                label: `${record.reason} (${record.status})`,
+                label: `${record.giphyId} (${record.status})`,
                 value: record.giphyId,
               })),
               required: true,

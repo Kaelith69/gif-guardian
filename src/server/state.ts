@@ -10,6 +10,7 @@ export const REGISTRY_LOCK_KEY = 'gif-guardian:registry-lock'
 export const AUDIT_KEY = 'gif-guardian:audit'
 export const AUDIT_SEQUENCE_KEY = 'gif-guardian:audit:sequence'
 export const ACTION_KEY_PREFIX = 'gif-guardian:action:'
+export const ACTION_PROCESSING_KEY_PREFIX = 'gif-guardian:action-processing:'
 
 export const AUDIT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 export const ACTION_TTL_SECONDS = 10 * 60
@@ -171,10 +172,29 @@ export function actionKey(commentId: string): string {
   return `${ACTION_KEY_PREFIX}${commentId}`
 }
 
+function actionProcessingKey(commentId: string): string {
+  return `${ACTION_PROCESSING_KEY_PREFIX}${commentId}`
+}
+
 export type ActionResult = {
   status: 'success' | 'partial'
   giphyIds: string[]
   message: string
+}
+
+function parseActionResult(value: string): ActionResult {
+  const parsed = parseJsonRecord<Partial<ActionResult>>(value, 'action result')
+
+  if (
+    (parsed.status !== 'success' && parsed.status !== 'partial') ||
+    !Array.isArray(parsed.giphyIds) ||
+    !parsed.giphyIds.every(id => typeof id === 'string') ||
+    typeof parsed.message !== 'string'
+  ) {
+    throw new Error('Invalid Gif-Guardian action result.')
+  }
+
+  return parsed as ActionResult
 }
 
 export async function claimAction(
@@ -182,7 +202,7 @@ export async function claimAction(
   result: ActionResult,
 ): Promise<boolean> {
   const response = await redis.set(
-    actionKey(commentId),
+    actionProcessingKey(commentId),
     JSON.stringify(result),
     {
       nx: true,
@@ -190,7 +210,15 @@ export async function claimAction(
     },
   )
 
-  return response === 'OK'
+  if (response === 'OK') {
+    await redis.set(actionKey(commentId), JSON.stringify(result), {
+      expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
+    })
+
+    return true
+  }
+
+  return false
 }
 
 export async function getActionResult(
@@ -198,9 +226,7 @@ export async function getActionResult(
 ): Promise<ActionResult | undefined> {
   const value = await redis.get(actionKey(commentId))
 
-  return value
-    ? parseJsonRecord<ActionResult>(value, 'action result')
-    : undefined
+  return value ? parseActionResult(value) : undefined
 }
 
 export async function saveActionResult(
@@ -210,4 +236,5 @@ export async function saveActionResult(
   await redis.set(actionKey(commentId), JSON.stringify(result), {
     expiration: new Date(Date.now() + ACTION_TTL_SECONDS * 1000),
   })
+  await redis.del(actionProcessingKey(commentId))
 }

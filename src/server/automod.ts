@@ -1,6 +1,7 @@
 import {reddit} from '@devvit/reddit'
 import {redis} from '@devvit/redis'
 
+import type {RestrictedGif} from './gif.ts'
 import {listRestrictedGifs} from './gif-store.ts'
 import {
   AUTOMOD_LOCK_KEY,
@@ -16,6 +17,7 @@ const START_MARKER = '# === GIF GUARDIAN START ==='
 const END_MARKER = '# === GIF GUARDIAN END ==='
 
 const MAX_SYNC_ATTEMPTS = 3
+const LOCK_RENEW_INTERVAL_MS = Math.floor((LOCK_TTL_SECONDS * 1_000) / 3)
 
 export type SyncResult = {
   status: 'synced' | 'pending'
@@ -24,24 +26,28 @@ export type SyncResult = {
   wikiRevisionId: string | null
 }
 
-export function buildRule(ids: string[]): string {
+export function buildRule(
+  ids: string[],
+  reason = 'GIF restriction',
+  type: 'comment' | 'submission' = 'comment',
+): string {
   const escapedIds = ids.map(escapeRegex)
 
   const regex = `!\\[gif\\]\\(giphy\\|(${escapedIds.join('|')})(?:\\|[^)]*)?\\)`
 
   return [
-    'type: comment',
+    `type: ${type}`,
     `body (includes, regex): '${regex}'`,
     'action: spam',
-    'action_reason: "Politic/Religious"',
+    `action_reason: ${JSON.stringify(reason)}`,
     'moderators_exempt: false',
   ].join('\n')
 }
 
-export function packIds(ids: string[]): string[][] {
+export function packIds(ids: string[], reason = 'GIF restriction'): string[][] {
   const groups: string[][] = []
   let current: string[] = []
-  let currentSize = Buffer.byteLength(buildRule([]), 'utf8')
+  let currentSize = Buffer.byteLength(buildRule([], reason), 'utf8')
 
   for (const id of ids) {
     const idSize = Buffer.byteLength(escapeRegex(id), 'utf8')
@@ -50,7 +56,7 @@ export function packIds(ids: string[]): string[][] {
     if (current.length > 0 && candidateSize > MAX_AUTOMOD_RULE_BYTES) {
       groups.push(current)
       current = [id]
-      currentSize = Buffer.byteLength(buildRule([id]), 'utf8')
+      currentSize = Buffer.byteLength(buildRule([id], reason), 'utf8')
     } else {
       current.push(id)
       currentSize = candidateSize
@@ -68,11 +74,39 @@ function escapeRegex(id: string): string {
   return id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function buildManagedBlock(activeIds: string[]): string {
-  const rules = packIds(activeIds)
+type ActiveRestriction = Pick<RestrictedGif, 'giphyId' | 'reason'>
+
+function groupRestrictions(
+  restrictions: string[] | ActiveRestriction[],
+): Map<string, string[]> {
+  const groups = new Map<string, string[]>()
+
+  for (const restriction of restrictions) {
+    const giphyId =
+      typeof restriction === 'string' ? restriction : restriction.giphyId
+    const reason =
+      typeof restriction === 'string' ? 'GIF restriction' : restriction.reason
+    const ids = groups.get(reason) ?? []
+
+    ids.push(giphyId)
+    groups.set(reason, ids)
+  }
+
+  return groups
+}
+
+export function buildManagedBlock(
+  restrictions: string[] | ActiveRestriction[],
+): string {
+  const rules = [...groupRestrictions(restrictions)].flatMap(([reason, ids]) =>
+    packIds(ids, reason).flatMap(group => [
+      buildRule(group, reason, 'comment'),
+      buildRule(group, reason, 'submission'),
+    ]),
+  )
 
   const body = rules.length
-    ? rules.map(buildRule).join('\n')
+    ? rules.join('\n')
     : '# Gif-Guardian: no active GIF restrictions.'
 
   return [START_MARKER, body, END_MARKER].join('\n')
@@ -170,6 +204,16 @@ async function releaseLock(token: string): Promise<void> {
   }
 }
 
+async function renewLock(token: string): Promise<void> {
+  const currentToken = await redis.get(AUTOMOD_LOCK_KEY)
+
+  if (currentToken !== token) {
+    throw new AutoModLeaseLostError()
+  }
+
+  await redis.expire(AUTOMOD_LOCK_KEY, LOCK_TTL_SECONDS)
+}
+
 async function markSyncSuccess(revision: number, wikiRevisionId: string) {
   return updateRegistryState(revision, current => ({
     ...current,
@@ -220,6 +264,15 @@ async function buildPendingResult(activeCount: number): Promise<SyncResult> {
 
 export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
   const lockToken = await acquireLock()
+  const lockRenewal = setInterval(() => {
+    void renewLock(lockToken).catch(error => {
+      console.error(
+        `Gif-Guardian could not renew the AutoModerator sync lock; ${formatError(
+          error,
+        )}`,
+      )
+    })
+  }, LOCK_RENEW_INTERVAL_MS)
 
   let currentRevision: number | undefined
   let lastActiveCount = 0
@@ -232,11 +285,11 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
       currentRevision = initialState.desiredRevision
 
-      const activeIds = (await listRestrictedGifs())
-        .filter(gif => gif.status === 'active')
-        .map(gif => gif.giphyId)
+      const activeRestrictions = (await listRestrictedGifs()).filter(
+        gif => gif.status === 'active',
+      )
 
-      lastActiveCount = activeIds.length
+      lastActiveCount = activeRestrictions.length
 
       await assertLockOwned(lockToken)
 
@@ -252,7 +305,7 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
       const initialPage = await reddit.getWikiPage(subredditName, AUTOMOD_PAGE)
 
-      const block = buildManagedBlock(activeIds)
+      const block = buildManagedBlock(activeRestrictions)
 
       await assertLockOwned(lockToken)
 
@@ -374,6 +427,8 @@ export async function syncAutoMod(subredditName: string): Promise<SyncResult> {
 
     throw error
   } finally {
+    clearInterval(lockRenewal)
+
     try {
       await releaseLock(lockToken)
     } catch (error) {

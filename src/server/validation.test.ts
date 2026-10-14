@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import {parseAuditRecord} from './audit.ts'
 import {parseRestrictedGif, RegistryValidationError} from './validation.ts'
 
 test('validates a restricted GIF record', () => {
@@ -44,4 +45,22 @@ test('maps legacy registry records to the current shape', () => {
 
   assert.equal(record.firstAddedAt, record.lastActionAt)
   assert.equal(record.sourceUrl, 'https://giphy.com/gifs/LEGACY')
+})
+
+test('validates audit records before exposing them', () => {
+  const record = parseAuditRecord(
+    JSON.stringify({
+      id: 1,
+      action: 'restrict',
+      status: 'success',
+      moderator: 'moderator',
+      at: '2026-09-19T00:00:00.000Z',
+    }),
+  )
+
+  assert.equal(record.id, 1)
+  assert.throws(
+    () => parseAuditRecord(JSON.stringify({...record, status: 'unknown'})),
+    /Invalid Gif-Guardian audit record/,
+  )
 })
