@@ -4,15 +4,9 @@ import {context} from '@devvit/server'
 import type {PartialJsonValue, UiResponse} from '@devvit/shared'
 
 import {appendAudit} from './audit.ts'
-import {type SyncResult, syncAutoMod} from './automod.ts'
+import {syncAutoMod} from './automod.ts'
 import {extractGiphyIds} from './gif-parser.ts'
-import {
-  getRestrictedGif,
-  listRestrictedGifs,
-  mutateRestrictions,
-  removeSourceReference,
-  setGifStatus,
-} from './gif-store.ts'
+import {mutateRestrictions, removeSourceReference} from './gif-store.ts'
 import {
   type ActionResult,
   claimAction,
@@ -42,20 +36,12 @@ export async function onReq(
         await handleRestrictGifMenu(rspMsg)
         return
 
-      case '/internal/menu/manage-restricted-gifs':
-        await handleManageRestrictedGifsMenu(rspMsg)
-        return
-
       case '/internal/menu/sync-automod':
         await handleSyncAutoMod(rspMsg)
         return
 
       case '/internal/form/restrict-gif-submit':
         await handleRestrictGifForm(reqMsg, rspMsg)
-        return
-
-      case '/internal/form/manage-restricted-gifs-submit':
-        await handleManageRestrictedGifsForm(reqMsg, rspMsg)
         return
 
       case '/internal/triggers/comment-delete':
@@ -158,80 +144,8 @@ async function handleRestrictGifMenu(rspMsg: ServerResponse): Promise<void> {
             'This will validate GIFs in the selected comment, restrict them, ' +
             'update AutoModerator, ' +
             'and remove this comment as spam.',
-          fields: [
-            {
-              type: 'string',
-              name: 'reason',
-              label: 'Reason',
-              defaultValue: 'Reason',
-              required: true,
-            },
-          ],
+          fields: [],
           acceptLabel: 'Restrict + Spam Remove',
-          cancelLabel: 'Cancel',
-        },
-      },
-    },
-    rspMsg,
-  )
-}
-
-async function handleManageRestrictedGifsMenu(
-  rspMsg: ServerResponse,
-): Promise<void> {
-  await requireModerator()
-
-  const records = await listRestrictedGifs()
-
-  if (records.length === 0) {
-    writeJson<UiResponse>(
-      200,
-      {
-        showToast: 'There are no restricted GIFs to manage.',
-      },
-      rspMsg,
-    )
-    return
-  }
-
-  writeJson<UiResponse>(
-    200,
-    {
-      showForm: {
-        name: 'manageRestrictedGifs',
-        form: {
-          title: 'Manage Restricted GIFs',
-          description:
-            'Select a GIF and choose whether to disable or restore it.',
-          fields: [
-            {
-              type: 'select',
-              name: 'giphyId',
-              label: 'GIF',
-              options: records.map(record => ({
-                label: `${record.giphyId} (${record.status})`,
-                value: record.giphyId,
-              })),
-              required: true,
-            },
-            {
-              type: 'select',
-              name: 'action',
-              label: 'Action',
-              options: [
-                {
-                  label: 'Disable',
-                  value: 'disabled',
-                },
-                {
-                  label: 'Restore',
-                  value: 'active',
-                },
-              ],
-              required: true,
-            },
-          ],
-          acceptLabel: 'Apply',
           cancelLabel: 'Cancel',
         },
       },
@@ -265,12 +179,7 @@ async function handleRestrictGifForm(
     return
   }
 
-  const form = await readJson<FormData>(reqMsg)
-
-  const reason =
-    typeof form.reason === 'string' && form.reason.trim().length > 0
-      ? form.reason.trim().slice(0, 200)
-      : 'Reason'
+  await readJson<FormData>(reqMsg)
 
   /*
    * Parse the form before claiming the action so malformed input
@@ -301,7 +210,6 @@ async function handleRestrictGifForm(
     mutation = await mutateRestrictions(
       giphyIds.map(giphyId => ({
         giphyId,
-        reason,
         username,
         sourceComment: comment.id,
         sourceUrl: comment.url,
@@ -387,7 +295,6 @@ async function handleRestrictGifForm(
     postId: comment.postId,
     moderator: username,
     at: new Date().toISOString(),
-    reason,
     removedComment: removedAsSpam,
     note,
   })
@@ -418,84 +325,6 @@ async function handleRestrictGifForm(
     200,
     {
       showToast: result.message,
-    },
-    rspMsg,
-  )
-}
-
-async function handleManageRestrictedGifsForm(
-  reqMsg: IncomingMessage,
-  rspMsg: ServerResponse,
-): Promise<void> {
-  const {subredditName, username} = await requireModerator()
-
-  const form = await readJson<{
-    giphyId?: unknown
-    action?: unknown
-  }>(reqMsg)
-
-  if (
-    typeof form.giphyId !== 'string' ||
-    !/^[A-Za-z0-9_-]+$/.test(form.giphyId) ||
-    (form.action !== 'active' && form.action !== 'disabled')
-  ) {
-    throw new Error('A valid GIF and management action are required.')
-  }
-
-  const existing = await getRestrictedGif(form.giphyId)
-
-  if (!existing) {
-    throw new Error(`GIF ${form.giphyId} is not in the registry.`)
-  }
-
-  const updated = await setGifStatus(form.giphyId, form.action, username)
-
-  if (!updated) {
-    throw new Error(`GIF ${form.giphyId} is not in the registry.`)
-  }
-
-  let syncResult: SyncResult | undefined
-
-  let syncError: unknown
-
-  try {
-    syncResult = await syncAutoMod(subredditName)
-  } catch (error) {
-    syncError = error
-  }
-
-  const syncPending = syncResult?.status === 'pending'
-
-  await appendAudit({
-    action: form.action === 'disabled' ? 'disable' : 'restore',
-    status: syncError || syncPending ? 'partial' : 'success',
-    giphyIds: [form.giphyId],
-    commentId: existing.sourceComment,
-    postId: existing.sourcePost,
-    moderator: username,
-    at: new Date().toISOString(),
-    reason: existing.reason,
-    note: syncError
-      ? `Desired state retained, but AutoModerator sync failed: ${formatError(
-          syncError,
-        )}`
-      : syncPending
-        ? 'Desired state updated, but AutoModerator synchronization is still pending.'
-        : undefined,
-  })
-
-  const message = syncError
-    ? `GIF ${form.giphyId} updated, but AutoModerator sync failed.`
-    : syncPending
-      ? `GIF ${form.giphyId} updated, but AutoModerator synchronization is still pending.`
-      : `GIF ${form.giphyId} ${
-          form.action === 'disabled' ? 'disabled' : 'restored'
-        }.`
-
-  writeJson<UiResponse>(
-    200,
-    {
-      showToast: message,
     },
     rspMsg,
   )

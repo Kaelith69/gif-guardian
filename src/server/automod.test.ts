@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   buildManagedBlock,
   buildRule,
+  buildUrlRule,
   ensureManagedBlock,
   packIds,
 } from './automod.ts'
@@ -13,9 +14,11 @@ test('builds a spam rule for active IDs', () => {
   assert.match(block, /# === GIF GUARDIAN START ===/)
   assert.match(block, /type: comment/)
   assert.match(block, /type: submission/)
+  assert.match(block, /url \(regex\):/)
   assert.match(block, /action: spam/)
   assert.match(block, /ABC\|XYZ/)
   assert.match(block, /body \(includes, regex\):/)
+  assert.match(block, /\n---\ntype: /)
 })
 
 test('matches exact GIF embeds in both post and comment rules', () => {
@@ -32,17 +35,32 @@ test('matches exact GIF embeds in both post and comment rules', () => {
   assert.doesNotMatch('![gif](giphy|ABCD)', regex)
   assert.doesNotMatch('![gif](giphy|XYZ)', regex)
 
-  assert.match(buildRule(['ABC'], 'reason', 'submission'), /type: submission/)
+  assert.match(buildRule(['ABC'], 'submission'), /type: submission/)
+
+  const urlRule = buildUrlRule(['ABC'])
+  const urlRegex = new RegExp(
+    urlRule.match(/url \(regex\): '([^']+)'/)?.[1] ?? '',
+  )
+
+  assert.match('https://media.giphy.com/media/ABC/giphy.gif', urlRegex)
+  assert.match('https://giphy.com/gifs/funny-title-ABC', urlRegex)
+  assert.doesNotMatch('https://media.giphy.com/media/ABCD/giphy.gif', urlRegex)
 })
 
-test('includes each stored restriction reason in the managed block', () => {
-  const block = buildManagedBlock([
-    {giphyId: 'ABC', reason: 'Policy violation'},
-    {giphyId: 'XYZ', reason: 'Quoted "reason"'},
-  ])
+test('separates every managed rule as a valid AutoModerator document', () => {
+  const managed = buildManagedBlock(['ABC', 'XYZ'])
+    .replace('# === GIF GUARDIAN START ===\n', '')
+    .replace('\n# === GIF GUARDIAN END ===', '')
+  const documents = managed.split('\n---\n')
 
-  assert.match(block, /action_reason: "Policy violation"/)
-  assert.match(block, /action_reason: "Quoted \\"reason\\""/)
+  assert.ok(documents.length >= 3)
+  assert.ok(documents.every(document => document.includes('action: spam')))
+})
+
+test('does not include moderation reasons in the managed block', () => {
+  const block = buildManagedBlock(['ABC', 'XYZ'])
+
+  assert.doesNotMatch(block, /action_reason:/)
 })
 
 test('builds an explicit empty restriction block', () => {

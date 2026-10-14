@@ -24,7 +24,6 @@ export type RegistryMutation = {
 
 type RestrictionInput = {
   giphyId: string
-  reason: string
   username?: string
   sourceComment: string
   sourceUrl: string
@@ -65,14 +64,6 @@ function dedupeInputs(incoming: RestrictionInput[]): RestrictionInput[] {
   }
 
   return [...byId.values()]
-}
-
-export async function getRestrictedGif(
-  giphyId: string,
-): Promise<RestrictedGif | undefined> {
-  const value = await redis.hGet(GIF_HASH_KEY, giphyId)
-
-  return value ? parseRestrictedGif(value) : undefined
 }
 
 export async function listRestrictedGifs(): Promise<RestrictedGif[]> {
@@ -125,25 +116,14 @@ export async function mutateRestrictions(
         const previous = existing.get(item.giphyId)
 
         if (previous?.status === 'active' && status === 'active') {
-          if (previous.reason === item.reason) {
-            alreadyRestricted.push(item.giphyId)
-            records.push(previous)
-          } else {
-            records.push({
-              ...previous,
-              reason: item.reason,
-              lastActionAt: now,
-              lastActionBy: item.username,
-            })
-          }
-
+          alreadyRestricted.push(item.giphyId)
+          records.push(previous)
           continue
         }
 
         records.push({
           giphyId: item.giphyId,
           status,
-          reason: previous?.reason ?? item.reason,
           firstAddedAt: previous?.firstAddedAt ?? now,
           firstAddedBy: previous?.firstAddedBy ?? item.username,
           lastActionAt: now,
@@ -254,65 +234,6 @@ export async function mutateRestrictions(
           alreadyRestricted,
           revision: nextState.desiredRevision,
         }
-      }
-    }
-
-    throw new Error('Gif-Guardian registry changed concurrently; please retry.')
-  })
-}
-
-export async function setGifStatus(
-  giphyId: string,
-  status: GifStatus,
-  username?: string,
-): Promise<RestrictedGif | undefined> {
-  return withRegistryLock(async () => {
-    for (let attempt = 0; attempt < MAX_TRANSACTION_RETRIES; attempt += 1) {
-      const value = await redis.hGet(GIF_HASH_KEY, giphyId)
-
-      if (!value) {
-        return undefined
-      }
-
-      const existing = parseRestrictedGif(value)
-
-      if (existing.status === status) {
-        return existing
-      }
-
-      const stateValue = await redis.get(STATE_KEY)
-      const currentState = stateValue
-        ? parseRegistryState(stateValue)
-        : EMPTY_STATE
-
-      const updated: RestrictedGif = {
-        ...existing,
-        status,
-        lastActionAt: new Date().toISOString(),
-        lastActionBy: username,
-      }
-
-      const nextState: RegistryState = {
-        ...currentState,
-        desiredRevision: currentState.desiredRevision + 1,
-        syncStatus: 'pending',
-        lastSyncError: null,
-      }
-
-      const transaction = await redis.watch(GIF_HASH_KEY, STATE_KEY)
-
-      await transaction.multi()
-
-      await transaction.hSet(GIF_HASH_KEY, {
-        [giphyId]: JSON.stringify(updated),
-      })
-
-      await transaction.set(STATE_KEY, JSON.stringify(nextState))
-
-      const result = await transaction.exec()
-
-      if (result) {
-        return updated
       }
     }
 
