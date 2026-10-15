@@ -18,14 +18,14 @@
     "watch": "npm run build:server -- --watch=forever"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
-    "@devvit/redis": "0.14.4",
-    "@devvit/reddit": "0.14.4",
-    "@devvit/server": "0.14.4",
-    "@devvit/shared": "0.14.4",
-    "@devvit/web": "0.14.4",
-    "@types/node": "24.19.2",
-    "devvit": "0.14.4",
+    "@biomejs/biome": "2.5.15",
+    "@devvit/redis": "0.14.8",
+    "@devvit/reddit": "0.14.8",
+    "@devvit/server": "0.14.8",
+    "@devvit/shared": "0.14.8",
+    "@devvit/web": "0.14.8",
+    "@types/node": "26.6.5",
+    "devvit": "0.14.8",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   },
