@@ -30,4 +30,3 @@ Redis stores the restriction state, while Gif-Guardian maintains a dedicated Aut
 - GIF spam in large subreddits
 - Moderators who want to turn one manual removal into automatic enforcement
 - Subreddits that want persistent GIF restrictions without manually editing AutoModerator
-- Temporarily disabling and later restoring GIF restrictions
